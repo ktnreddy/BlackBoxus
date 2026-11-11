@@ -14,6 +14,35 @@
 //! - No `unsafe` code, and no panics on untrusted input.
 //!
 //! The protocol is specified in `docs/spec/` in the repository.
+//!
+//! ## Example: deriving account keys
+//!
+//! ```
+//! use vault_core::{AccountSalt, KdfParams, MasterPassword, SecretKey, derive_account_keys};
+//!
+//! # fn main() -> vault_core::Result<()> {
+//! let password = MasterPassword::new_for_account_creation("correct horse battery staple")?;
+//! let secret_key = SecretKey::generate()?;
+//! let salt = AccountSalt::generate()?;
+//!
+//! let keys = derive_account_keys(&password, &secret_key, &salt, &KdfParams::MIN)?;
+//! # let _ = keys;
+//! # Ok(())
+//! # }
+//! ```
+
+mod error;
+mod kdf;
+mod key;
+mod password;
+mod random;
+mod secret_key;
+
+pub use error::{Error, Result, SecretKeyError};
+pub use kdf::{AccountKeys, AccountSalt, KdfParams, SALT_LEN, derive_account_keys};
+pub use key::{KEY_LEN, SymmetricKey};
+pub use password::{MAX_PASSWORD_BYTES, MIN_NEW_PASSWORD_CHARS, MasterPassword};
+pub use secret_key::{SECRET_KEY_LEN, SecretKey};
 
 /// The wire and storage protocol version implemented by this library.
 ///

@@ -18,7 +18,7 @@ This document summarises the design. The normative protocol is in [`spec/`](spec
 ## Key hierarchy
 
 1. **Two secrets.** The master password (Unicode NFKC-normalised) and a 128-bit random Secret Key created on the first device. The Secret Key never reaches the server and is saved by the user in an Emergency Kit.
-2. **Stretching.** Argon2id over the master password. Clients enforce a minimum of 64 MiB, 3 passes, 4 lanes regardless of what the server says, and target about one second of work.
+2. **Stretching.** Argon2id over the master password, 128 MiB and 4 passes by default. Clients refuse parameters below 64 MiB and 3 passes, or above safe maximums, regardless of what the server says.
 3. **Account Unlock Key.** HKDF-SHA-256 combines the Argon2id output with the Secret Key. A separate, domain-separated output is used for OPAQUE login, so the login credential and the encryption key are independent.
 4. **Account key set.** Random keys wrapped by the Account Unlock Key: a 256-bit symmetric key, an X-Wing key pair for receiving shares, and an Ed25519 + ML-DSA-65 identity signing key pair.
 5. **Vault keys.** One random key per vault, wrapped to each member's X-Wing public key with HPKE.

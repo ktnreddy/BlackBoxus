@@ -27,6 +27,13 @@ print_stdout = "deny"
 print_stderr = "deny"
 todo = "warn"
 
+# Argon2id is very slow without optimisation; keep tests fast.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
 [profile.release]
 codegen-units = 1
 lto = "fat"

@@ -1,0 +1,45 @@
+{
+  "kdf": [
+    {
+      "description": "ASCII passphrase, minimum parameters",
+      "password": "correct horse battery staple",
+      "password_nfkc_hex": "636f727265637420686f727365206261747465727920737461706c65",
+      "secret_key_hex": "000102030405060708090a0b0c0d0e0f",
+      "salt_hex": "101112131415161718191a1b1c1d1e1f",
+      "memory_kib": 65536,
+      "iterations": 3,
+      "parallelism": 1,
+      "account_unlock_key_hex": "449bb85f6b383df065631f4bfccb04fdcdd7d237d84ce759066d7700c2c07df7",
+      "opaque_password_hex": "fcbe44cb9b63410d71cbbd888c2076eb9fc34d1bfecd0624de19b563e156ddbe"
+    },
+    {
+      "description": "Unicode password needing NFKC normalisation, default parameters",
+      "password": "pa\u0308ssw\u00f6rd \ufb01sh \ud83d\udd10",
+      "password_nfkc_hex": "70c3a4737377c3b67264206669736820f09f9490",
+      "secret_key_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+      "salt_hex": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+      "memory_kib": 131072,
+      "iterations": 4,
+      "parallelism": 4,
+      "account_unlock_key_hex": "b303f41d79dc9ebc9bd6a1f4a08d5d534d8b4646fad8c8da001d6be15f08297b",
+      "opaque_password_hex": "34f36030a0639613cf2f0522103fffa5edb69fc21d0a19254e24473a445a1b3b"
+    },
+    {
+      "description": "Leading and trailing spaces are kept",
+      "password": "  twelve chars  ",
+      "password_nfkc_hex": "20207477656c76652063686172732020",
+      "secret_key_hex": "ffffffffffffffffffffffffffffffff",
+      "salt_hex": "00000000000000000000000000000000",
+      "memory_kib": 98304,
+      "iterations": 3,
+      "parallelism": 2,
+      "account_unlock_key_hex": "4349ec39835f480b121ecbccc55f1ea279d55a119e2af7fd44ad8f77f83d2a0b",
+      "opaque_password_hex": "602e0f01f68f18bb1abbee2b0b2a339c27630ceaa68a8ca36e64e3bff781a20a"
+    }
+  ],
+  "secret_key_display": [
+    { "secret_key_hex": "00000000000000000000000000000000", "display": "B1-0000000-0000000-0000000-00000RY" },
+    { "secret_key_hex": "000102030405060708090a0b0c0d0e0f", "display": "B1-0004106-1050R3G-G28A1C6-0T3GFCT" },
+    { "secret_key_hex": "ffffffffffffffffffffffffffffffff", "display": "B1-7ZZZZZZ-ZZZZZZZ-ZZZZZZZ-ZZZZZM3" }
+  ]
+}
