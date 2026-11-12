@@ -31,21 +31,34 @@
 //! # }
 //! ```
 
+mod aead;
 mod error;
 mod identity;
 mod kdf;
 mod key;
+mod keyset;
 pub mod login;
 mod password;
 mod random;
 mod secret_key;
+mod signature;
+mod xwing;
 
 pub use error::{Error, Result, SecretKeyError};
 pub use identity::{ClientIdentity, MAX_EMAIL_BYTES, MAX_ORIGIN_BYTES, ServerIdentity};
 pub use kdf::{AccountKeys, AccountSalt, KdfParams, SALT_LEN, derive_account_keys};
 pub use key::{KEY_LEN, SymmetricKey};
+pub use keyset::{
+    ACCOUNT_ID_LEN, AccountId, KeySet, PUBLIC_BUNDLE_LEN, PublicKeyBundle,
+    SIGNED_PUBLIC_BUNDLE_LEN, UnlockMethod, WRAPPED_KEY_SET_LEN,
+};
 pub use password::{MAX_PASSWORD_BYTES, MIN_NEW_PASSWORD_CHARS, MasterPassword};
 pub use secret_key::{SECRET_KEY_LEN, SecretKey};
+pub use signature::{
+    HYBRID_SIGNATURE_LEN, HybridSignature, IDENTITY_PUBLIC_LEN, IdentityPublicKey,
+    IdentitySecretKey, MAX_CONTEXT_LEN,
+};
+pub use xwing::{XWING_PUBLIC_LEN, XWingPublicKey};
 
 /// The wire and storage protocol version implemented by this library.
 ///

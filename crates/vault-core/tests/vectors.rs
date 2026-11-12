@@ -1,6 +1,6 @@
 //! Checks `vault-core` against the published test vectors in `docs/spec/vectors/`.
 
-#![allow(clippy::unwrap_used, reason = "test helpers")]
+#![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "test code")]
 
 use serde::Deserialize;
 use vault_core::{AccountSalt, KdfParams, MasterPassword, SecretKey, derive_account_keys};
@@ -141,4 +141,65 @@ fn login_vectors_match() {
         assert_eq!(hex::encode(token.as_bytes()), c.session_token_hex);
         assert_eq!(hex::encode(token.storage_hash()), c.storage_hash_hex);
     }
+}
+
+const KEY_SETS: &str = include_str!("../../../docs/spec/vectors/05-key-sets.json");
+
+#[derive(Deserialize)]
+struct KeySetVector {
+    account_key_hex: String,
+    account_id_hex: String,
+    key_set_version: u32,
+    wrapping_key_hex: String,
+    wrapped_hex: String,
+    xwing_public_key_hex: String,
+    ed25519_public_key_hex: String,
+    ml_dsa_public_key_hex: String,
+    public_bundle_hex: String,
+    signed_public_bundle_sample_hex: String,
+}
+
+#[test]
+fn key_set_vectors_match() {
+    use vault_core::{AccountId, KeySet, PublicKeyBundle, SymmetricKey, UnlockMethod};
+
+    let v: KeySetVector = serde_json::from_str(KEY_SETS).unwrap();
+    let account_id = AccountId::from_bytes(bytes16(&v.account_id_hex));
+    let wrapping_key = SymmetricKey::from_bytes(
+        hex::decode(&v.wrapping_key_hex)
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
+
+    let wrapped = hex::decode(&v.wrapped_hex).unwrap();
+    let (key_set, version) = KeySet::unwrap(
+        &wrapped,
+        &wrapping_key,
+        &account_id,
+        UnlockMethod::MasterPassword,
+        1,
+    )
+    .unwrap();
+    assert_eq!(version, v.key_set_version);
+    assert_eq!(
+        hex::encode(key_set.account_key().as_bytes()),
+        v.account_key_hex
+    );
+    assert_eq!(
+        hex::encode(key_set.xwing_public_key().as_bytes()),
+        v.xwing_public_key_hex
+    );
+    let identity = key_set.identity().public_key().to_bytes();
+    assert_eq!(hex::encode(&identity[..32]), v.ed25519_public_key_hex);
+    assert_eq!(hex::encode(&identity[32..]), v.ml_dsa_public_key_hex);
+
+    let signed = hex::decode(&v.signed_public_bundle_sample_hex).unwrap();
+    assert_eq!(
+        hex::encode(&signed[..vault_core::PUBLIC_BUNDLE_LEN]),
+        v.public_bundle_hex
+    );
+    let bundle = PublicKeyBundle::verify_signed(&signed).unwrap();
+    assert_eq!(bundle.account_id, account_id);
+    assert_eq!(bundle.key_set_version, v.key_set_version);
 }

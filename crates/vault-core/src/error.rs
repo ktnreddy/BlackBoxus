@@ -55,6 +55,30 @@ pub enum Error {
     /// Secret Key, account or server may be wrong.
     #[error("authentication failed")]
     Authentication,
+
+    /// Encryption failed inside the underlying primitive.
+    #[error("encryption failed")]
+    Encryption,
+
+    /// Decryption failed: wrong key, or the data was modified.
+    #[error("decryption failed")]
+    Decryption,
+
+    /// A signing context is longer than 255 bytes.
+    #[error("signing context too long")]
+    InvalidContext,
+
+    /// Signing failed inside the underlying primitive.
+    #[error("signing failed")]
+    Signing,
+
+    /// A signature did not verify.
+    #[error("invalid signature")]
+    InvalidSignature,
+
+    /// The server offered an older key set than this device has already seen.
+    #[error("key set is older than one already seen")]
+    KeySetRollback,
 }
 
 /// Why a Secret Key string was rejected.

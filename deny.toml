@@ -13,6 +13,10 @@ ignore = [
   # ristretto255, whose arithmetic is in curve25519-dalek, so the affected
   # crypto-bigint operations never run on secrets. No fixed 0.5.x exists.
   { id = "RUSTSEC-2026-0387", reason = "affected code is not used: OPAQUE runs on curve25519-dalek" },
+  # proc-macro-error2 is a compile-time dependency of libcrux's hax-lib
+  # macros. It never runs in BlackBoxus and has no maintained replacement
+  # there yet; revisit when libcrux updates hax-lib.
+  { id = "RUSTSEC-2026-0173", reason = "unmaintained build-time proc macro used by libcrux; no safe upgrade" },
 ]
 
 [licenses]

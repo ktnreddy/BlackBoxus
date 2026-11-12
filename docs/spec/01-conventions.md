@@ -56,3 +56,5 @@ Implementations MUST:
 | `"BlackBoxus v1 fake-salt"` | [3.8](03-account-creation.md#38-signing-in-on-a-new-device) |
 | `"BlackBoxus v1 login"` | [4.2](04-login.md#42-configuration) |
 | `"BlackBoxus v1 session-token"` | [4.6](04-login.md#46-session-token) |
+| `"BlackBoxus v1 key-set"` | [5.4](05-key-sets.md#54-wrapping) |
+| `"BlackBoxus v1 public-key-bundle"` | [5.5](05-key-sets.md#55-public-key-bundle) |
