@@ -1,0 +1,32 @@
+{
+  "client_identity": [
+    { "input": "alice@example.com", "canonical": "alice@example.com" },
+    { "input": "  Alice.Example@Mail.COM \u000a", "canonical": "alice.example@mail.com" },
+    { "input": "\uff41\uff4c\uff49\uff43\uff45@example.com", "canonical": "alice@example.com" },
+    { "input": "J\u00d6RG@B\u00dcRO.de", "canonical": "j\u00f6rg@b\u00fcro.de" }
+  ],
+  "client_identity_invalid": [
+    "",
+    "no-at-sign",
+    "a@b@c",
+    "a b@c.d",
+    "@example.com"
+  ],
+  "server_identity": [
+    { "input": "https://api.example.org", "canonical": "https://api.example.org" },
+    { "input": "HTTPS://API.Example.org", "canonical": "https://api.example.org" },
+    { "input": "https://api.example.org:8443", "canonical": "https://api.example.org:8443" },
+    { "input": "http://localhost:8787", "canonical": "http://localhost:8787" }
+  ],
+  "server_identity_invalid": [
+    "http://api.example.org",
+    "https://api.example.org/",
+    "https://api.example.org/path",
+    "https://user@api.example.org",
+    "api.example.org"
+  ],
+  "session_token": [
+    { "session_key_hex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", "session_token_hex": "a8113a9b50f32cfee46b75078b9130ce058f0766d2ec40729228fce22c7a5ccc", "storage_hash_hex": "d9c1f73fa4b236c06566fe08e5e3c73c3a1bca9bf4c39441b70ee30700294d43" },
+    { "session_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f", "session_token_hex": "2d3ae1fc7463b89117f2623198ad351d353f42479db5aa3609c8c746ee3a4f66", "storage_hash_hex": "34edc1269afdee9fe4ee594a258740fdc5066fd5e3b74bbac250341445594e09" }
+  ]
+}

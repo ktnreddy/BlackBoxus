@@ -42,6 +42,19 @@ pub enum Error {
     /// Key derivation failed inside the underlying primitive.
     #[error("key derivation failed")]
     KeyDerivation,
+
+    /// An email address or server origin is not valid.
+    #[error("invalid email address or server address")]
+    InvalidIdentity,
+
+    /// A protocol message could not be parsed.
+    #[error("malformed protocol message")]
+    MalformedMessage,
+
+    /// Authentication failed. Deliberately does not say why: the password,
+    /// Secret Key, account or server may be wrong.
+    #[error("authentication failed")]
+    Authentication,
 }
 
 /// Why a Secret Key string was rejected.

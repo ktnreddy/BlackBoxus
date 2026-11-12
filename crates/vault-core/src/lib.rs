@@ -32,13 +32,16 @@
 //! ```
 
 mod error;
+mod identity;
 mod kdf;
 mod key;
+pub mod login;
 mod password;
 mod random;
 mod secret_key;
 
 pub use error::{Error, Result, SecretKeyError};
+pub use identity::{ClientIdentity, MAX_EMAIL_BYTES, MAX_ORIGIN_BYTES, ServerIdentity};
 pub use kdf::{AccountKeys, AccountSalt, KdfParams, SALT_LEN, derive_account_keys};
 pub use key::{KEY_LEN, SymmetricKey};
 pub use password::{MAX_PASSWORD_BYTES, MIN_NEW_PASSWORD_CHARS, MasterPassword};

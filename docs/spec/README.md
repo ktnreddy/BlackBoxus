@@ -7,7 +7,7 @@
 | 1 | [Conventions](01-conventions.md): notation, randomness, domain separation, secret handling | Draft |
 | 2 | [Primitives](02-primitives.md): algorithms and key sizes for protocol version 1 | Draft |
 | 3 | [Account creation](03-account-creation.md): Secret Key, master password, Argon2id, key derivation, Emergency Kit | Draft, implemented |
-| 4 | Login: OPAQUE registration and login, session keys | Planned |
+| 4 | [Login](04-login.md): OPAQUE registration and login, identities, session tokens | Draft, implemented |
 | 5 | Key sets: account keys, wrapping, rotation | Planned |
 | 6 | Item format: envelope layout, per-field encryption, associated data | Planned |
 | 7 | Vaults and sharing: vault keys, HPKE wrapping, membership changes | Planned |

@@ -153,7 +153,13 @@ The client MUST NOT upload the Emergency Kit or send it through any network prin
 4. The client derives `AUK` and `OPW` and logs in with OPAQUE.
 5. The client fetches the wrapped account key set and decrypts it with `AUK`. Authentication failure here means a wrong password, a wrong Secret Key, or a tampered server response; the client MUST treat all three the same way.
 
-To avoid revealing which email addresses have accounts, the server MUST answer requests for unknown addresses with a salt and parameters derived deterministically from the email address and a server secret, indistinguishable from a real account (see RFC 9807, Section 10.9).
+To avoid revealing which email addresses have accounts, the server MUST answer requests for unknown addresses with a salt and parameters that look like a real account's (see RFC 9807, Section 10.9):
+
+```
+fake_salt = first 16 bytes of HMAC-SHA-256(fake_salt_key, "BlackBoxus v1 fake-salt" ‖ client_identity)
+```
+
+with the default Argon2id parameters. `fake_salt_key` is a 32-byte server secret, and `client_identity` is the canonical email address (Section 4.3). The same address always receives the same answer.
 
 ## 3.9 Security considerations
 

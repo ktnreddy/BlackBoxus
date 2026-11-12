@@ -1,7 +1,7 @@
 //! # server-core
 //!
-//! Platform-independent server logic for BlackBoxus: request validation,
-//! vault revision ordering, and storage of encrypted data.
+//! Platform-independent server logic for BlackBoxus: login, request
+//! validation, vault revision ordering, and storage of encrypted data.
 //!
 //! The server is treated as untrusted by every client. It never sees
 //! plaintext vault data, master passwords or encryption keys, and clients
@@ -10,6 +10,12 @@
 //! Hosting-specific code (Cloudflare Workers, D1, Durable Objects) lives in a
 //! thin adapter crate, so the server can move to another platform by
 //! rewriting only that adapter.
+
+mod error;
+pub mod login;
+pub mod prelogin;
+
+pub use error::{Error, Result};
 
 /// Maximum size in bytes of a single encrypted item accepted by the server.
 pub const MAX_ITEM_CIPHERTEXT_BYTES: usize = 64 * 1024;

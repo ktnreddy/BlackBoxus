@@ -88,3 +88,57 @@ fn secret_key_display_matches_vectors() {
         assert_eq!(SecretKey::parse(&v.display).unwrap(), key);
     }
 }
+
+const LOGIN: &str = include_str!("../../../docs/spec/vectors/04-login.json");
+
+#[derive(Deserialize)]
+struct LoginVectors {
+    client_identity: Vec<IdentityVector>,
+    client_identity_invalid: Vec<String>,
+    server_identity: Vec<IdentityVector>,
+    server_identity_invalid: Vec<String>,
+    session_token: Vec<TokenVector>,
+}
+
+#[derive(Deserialize)]
+struct IdentityVector {
+    input: String,
+    canonical: String,
+}
+
+#[derive(Deserialize)]
+struct TokenVector {
+    session_key_hex: String,
+    session_token_hex: String,
+    storage_hash_hex: String,
+}
+
+#[test]
+fn login_vectors_match() {
+    let v: LoginVectors = serde_json::from_str(LOGIN).unwrap();
+
+    for c in v.client_identity {
+        assert_eq!(
+            vault_core::ClientIdentity::new(&c.input).unwrap().as_str(),
+            c.canonical
+        );
+    }
+    for bad in v.client_identity_invalid {
+        assert!(vault_core::ClientIdentity::new(&bad).is_err(), "{bad:?}");
+    }
+    for c in v.server_identity {
+        assert_eq!(
+            vault_core::ServerIdentity::new(&c.input).unwrap().as_str(),
+            c.canonical
+        );
+    }
+    for bad in v.server_identity_invalid {
+        assert!(vault_core::ServerIdentity::new(&bad).is_err(), "{bad:?}");
+    }
+    for c in v.session_token {
+        let key = hex::decode(&c.session_key_hex).unwrap();
+        let token = vault_core::login::SessionToken::from_session_key(&key).unwrap();
+        assert_eq!(hex::encode(token.as_bytes()), c.session_token_hex);
+        assert_eq!(hex::encode(token.storage_hash()), c.storage_hash_hex);
+    }
+}

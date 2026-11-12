@@ -53,3 +53,6 @@ Implementations MUST:
 | `"BlackBoxus v1 secret-key checksum"` | [3.2](03-account-creation.md#32-secret-key) |
 | `"BlackBoxus v1 account-unlock-key"` | [3.5](03-account-creation.md#35-two-secret-key-derivation) |
 | `"BlackBoxus v1 opaque-password"` | [3.5](03-account-creation.md#35-two-secret-key-derivation) |
+| `"BlackBoxus v1 fake-salt"` | [3.8](03-account-creation.md#38-signing-in-on-a-new-device) |
+| `"BlackBoxus v1 login"` | [4.2](04-login.md#42-configuration) |
+| `"BlackBoxus v1 session-token"` | [4.6](04-login.md#46-session-token) |
