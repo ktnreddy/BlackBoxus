@@ -7,7 +7,13 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+ignore = [
+  # crypto-bigint 0.5 comes in through elliptic-curve, which opaque-ke and
+  # voprf use for generic traits only. BlackBoxus uses OPAQUE with
+  # ristretto255, whose arithmetic is in curve25519-dalek, so the affected
+  # crypto-bigint operations never run on secrets. No fixed 0.5.x exists.
+  { id = "RUSTSEC-2026-0387", reason = "affected code is not used: OPAQUE runs on curve25519-dalek" },
+]
 
 [licenses]
 version = 2
