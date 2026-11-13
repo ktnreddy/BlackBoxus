@@ -79,6 +79,14 @@ pub enum Error {
     /// The server offered an older key set than this device has already seen.
     #[error("key set is older than one already seen")]
     KeySetRollback,
+
+    /// An item is larger than the format allows.
+    #[error("item is too large")]
+    ItemTooLarge,
+
+    /// An item envelope belongs to a different vault or item than expected.
+    #[error("item belongs to a different vault or item")]
+    WrongItem,
 }
 
 /// Why a Secret Key string was rejected.

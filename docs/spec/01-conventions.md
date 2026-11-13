@@ -58,3 +58,5 @@ Implementations MUST:
 | `"BlackBoxus v1 session-token"` | [4.6](04-login.md#46-session-token) |
 | `"BlackBoxus v1 key-set"` | [5.4](05-key-sets.md#54-wrapping) |
 | `"BlackBoxus v1 public-key-bundle"` | [5.5](05-key-sets.md#55-public-key-bundle) |
+| `"BlackBoxus v1 item-key"` | [6.4](06-items.md#64-envelope) |
+| `"BlackBoxus v1 item"` | [6.4](06-items.md#64-envelope) |

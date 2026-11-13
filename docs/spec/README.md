@@ -9,7 +9,7 @@
 | 3 | [Account creation](03-account-creation.md): Secret Key, master password, Argon2id, key derivation, Emergency Kit | Draft, implemented |
 | 4 | [Login](04-login.md): OPAQUE registration and login, identities, session tokens | Draft, implemented |
 | 5 | [Key sets](05-key-sets.md): account keys, wrapping, signed public keys, rotation | Draft, implemented |
-| 6 | Item format: envelope layout, per-field encryption, associated data | Planned |
+| 6 | [Vault items](06-items.md): content encoding, padding, encrypted envelopes | Draft, implemented |
 | 7 | Vaults and sharing: vault keys, HPKE wrapping, membership changes | Planned |
 | 8 | Revision log: hash chain, signatures, rollback and fork detection | Planned |
 | 9 | Key transparency: log structure and verification | Planned |

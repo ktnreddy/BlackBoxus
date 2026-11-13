@@ -203,3 +203,50 @@ fn key_set_vectors_match() {
     assert_eq!(bundle.account_id, account_id);
     assert_eq!(bundle.key_set_version, v.key_set_version);
 }
+
+const ITEMS: &str = include_str!("../../../docs/spec/vectors/06-items.json");
+
+#[derive(Deserialize)]
+struct ItemVector {
+    item: ItemJson,
+    vault_key_hex: String,
+    vault_id_hex: String,
+    item_id_hex: String,
+    revision: u64,
+    envelope_hex: String,
+}
+
+#[derive(Deserialize)]
+struct ItemJson {
+    created_ms: u64,
+    modified_ms: u64,
+    fields: Vec<FieldJson>,
+}
+
+#[derive(Deserialize)]
+struct FieldJson {
+    label: String,
+    value: String,
+}
+
+#[test]
+fn item_vectors_match() {
+    use vault_core::{ItemId, SymmetricKey, VaultId, open_item};
+
+    let v: ItemVector = serde_json::from_str(ITEMS).unwrap();
+    let vault_key =
+        SymmetricKey::from_bytes(hex::decode(&v.vault_key_hex).unwrap().try_into().unwrap());
+    let vault_id = VaultId::from_bytes(bytes16(&v.vault_id_hex));
+    let item_id = ItemId::from_bytes(bytes16(&v.item_id_hex));
+
+    let envelope = hex::decode(&v.envelope_hex).unwrap();
+    let opened = open_item(&envelope, &vault_key, &vault_id, Some(&item_id)).unwrap();
+    assert_eq!(opened.revision, v.revision);
+    assert_eq!(opened.item.created_ms, v.item.created_ms);
+    assert_eq!(opened.item.modified_ms, v.item.modified_ms);
+    assert_eq!(opened.item.fields.len(), v.item.fields.len());
+    for (got, want) in opened.item.fields.iter().zip(&v.item.fields) {
+        assert_eq!(got.label, want.label);
+        assert_eq!(got.value.as_str(), want.value);
+    }
+}

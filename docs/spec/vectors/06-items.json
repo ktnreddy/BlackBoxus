@@ -1,0 +1,22 @@
+{
+  "item": {
+    "item_type": 1,
+    "created_ms": 1762000000000,
+    "modified_ms": 1762000500000,
+    "fields": [
+      { "kind": 1, "label": "", "value": "Example \ud83d\udd10" },
+      { "kind": 2, "label": "Work email", "value": "alice@example.com" },
+      { "kind": 3, "label": "", "value": "correct horse battery staple" },
+      { "kind": 4, "label": "", "value": "https://example.com/login" },
+      { "kind": 6, "label": "", "value": "JBSWY3DPEHPK3PXP" }
+    ]
+  },
+  "vault_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "item_key_hex": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+  "vault_id_hex": "808182838485868788898a8b8c8d8e8f",
+  "item_id_hex": "909192939495969798999a9b9c9d9e9f",
+  "revision": 3,
+  "key_nonce_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7",
+  "content_nonce_hex": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7",
+  "envelope_hex": "0001808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f0000000000000003a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b705ad485ef318e2eb292667c23d7ded8f6bfbcd7ffe539c8e4519d1bcbbfea0695207269b55e75b5dd17b22d582337606c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d75b50d2eaf36ce0e7068a27729fb226040ca265250ad80e57df97b80b288967ddaa8c9b400e34cc664efd082531b82c2df0f58cf2d43be3a79b1b065d5e8a9a82b30f84cc748c3414149bfae621cc6ae92cc11f87c0ebc5c267b6c5f66636d6f6119f0f0b5c8d932439642661e5c04fb632d9757344e2884ea5597ba3a981188ff672f069e74606f0c25d35eae791048674d3fbf47135c97fdb356c42117d5c07d0e94db65ab52f3d52585a54fd45689aa240b75a15512c094c78aeba973ce97e8d1fabf12b8a80489064cbada791c0b95ac4394e1a4fa23ec5a20932a6da102dbc78cb48393a187fe3a1f7c04bce5dd46b9dadcf7bc6ba9a996669fc0c30287818fa608f3a9c3e8f9ebea8d42b79a867"
+}

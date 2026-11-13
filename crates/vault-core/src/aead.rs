@@ -18,7 +18,7 @@ pub const TAG_LEN: usize = 16;
 /// `nonce ‖ ciphertext ‖ tag`.
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "used by item encryption (spec section 6)")
+    expect(dead_code, reason = "kept for future single-key encryption")
 )]
 pub(crate) fn seal(key: &SymmetricKey, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
     let nonce: [u8; NONCE_LEN] = random::bytes()?;

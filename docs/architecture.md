@@ -22,7 +22,7 @@ This document summarises the design. The normative protocol is in [`spec/`](spec
 3. **Account Unlock Key.** HKDF-SHA-256 combines the Argon2id output with the Secret Key. A separate, domain-separated output is used for OPAQUE login, so the login credential and the encryption key are independent.
 4. **Account key set.** Random keys wrapped by the Account Unlock Key: a 256-bit symmetric key, an X-Wing key pair for receiving shares, and an Ed25519 + ML-DSA-65 identity signing key pair.
 5. **Vault keys.** One random key per vault, wrapped to each member's X-Wing public key with HPKE.
-6. **Item keys.** One random key per item, wrapped by the vault key. Each field is encrypted separately with XChaCha20-Poly1305 and bound, through associated data, to the protocol version, vault, item, field and revision.
+6. **Item keys.** A fresh random key for every saved revision of an item, wrapped by the vault key. The whole item, including titles and URLs, is encrypted as one padded XChaCha20-Poly1305 ciphertext bound to the vault, item and revision, which rules out field-swap attacks and hides the number of fields.
 7. **Device unlock.** Biometric or PIN unlock uses a random device key held in the Secure Enclave, StrongBox or TPM.
 8. **Passkey unlock.** The WebAuthn PRF output, through HKDF, wraps another copy of the account key set.
 

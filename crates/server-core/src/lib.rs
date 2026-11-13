@@ -17,13 +17,19 @@ pub mod prelogin;
 
 pub use error::{Error, Result};
 
-/// Maximum size in bytes of a single encrypted item accepted by the server.
-pub const MAX_ITEM_CIPHERTEXT_BYTES: usize = 64 * 1024;
+/// Maximum size in bytes of a single item envelope (spec section 6.4).
+pub const MAX_ITEM_CIPHERTEXT_BYTES: usize = vault_core::MAX_ENVELOPE_LEN;
 
-/// Returns `true` if an encrypted item of `len` bytes is within limits.
+/// Minimum size in bytes of a single item envelope (spec section 6.4).
+pub const MIN_ITEM_CIPHERTEXT_BYTES: usize = vault_core::MIN_ENVELOPE_LEN;
+
+/// Returns `true` if an item envelope of `len` bytes is within limits.
+///
+/// The server cannot decrypt envelopes; this only rejects sizes no honest
+/// client produces.
 #[must_use]
 pub const fn item_size_allowed(len: usize) -> bool {
-    len > 0 && len <= MAX_ITEM_CIPHERTEXT_BYTES
+    len >= MIN_ITEM_CIPHERTEXT_BYTES && len <= MAX_ITEM_CIPHERTEXT_BYTES
 }
 
 #[cfg(test)]
@@ -33,7 +39,8 @@ mod tests {
     #[test]
     fn rejects_empty_and_oversized_items() {
         assert!(!item_size_allowed(0));
-        assert!(item_size_allowed(1));
+        assert!(!item_size_allowed(MIN_ITEM_CIPHERTEXT_BYTES - 1));
+        assert!(item_size_allowed(MIN_ITEM_CIPHERTEXT_BYTES));
         assert!(item_size_allowed(MAX_ITEM_CIPHERTEXT_BYTES));
         assert!(!item_size_allowed(MAX_ITEM_CIPHERTEXT_BYTES + 1));
     }
