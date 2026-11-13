@@ -126,6 +126,11 @@ impl KeySet {
         &self.identity
     }
 
+    /// The X-Wing secret key, for opening vault shares.
+    pub(crate) const fn xwing_secret(&self) -> &XWingSecretKey {
+        &self.xwing
+    }
+
     /// The X-Wing public key.
     #[must_use]
     pub fn xwing_public_key(&self) -> XWingPublicKey {

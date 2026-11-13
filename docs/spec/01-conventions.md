@@ -60,3 +60,5 @@ Implementations MUST:
 | `"BlackBoxus v1 public-key-bundle"` | [5.5](05-key-sets.md#55-public-key-bundle) |
 | `"BlackBoxus v1 item-key"` | [6.4](06-items.md#64-envelope) |
 | `"BlackBoxus v1 item"` | [6.4](06-items.md#64-envelope) |
+| `"BlackBoxus v1 vault-key"` | [7.3](07-vaults-and-sharing.md#73-wrapping-for-the-owner) |
+| `"BlackBoxus v1 vault-share"` | [7.4](07-vaults-and-sharing.md#74-sharing-a-vault-key) |

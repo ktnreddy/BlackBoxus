@@ -250,3 +250,47 @@ fn item_vectors_match() {
         assert_eq!(got.value.as_str(), want.value);
     }
 }
+
+const VAULTS: &str = include_str!("../../../docs/spec/vectors/07-vaults-and-sharing.json");
+
+#[derive(Deserialize)]
+struct VaultVector {
+    vault_id_hex: String,
+    vault_key_hex: String,
+    vault_key_version: u32,
+    owner_account_id_hex: String,
+    owner_wrapped_hex: String,
+    recipient_account_id_hex: String,
+    share_sample_hex: String,
+}
+
+#[test]
+fn vault_vectors_match() {
+    use vault_core::{AccountId, KeySet, PublicKeyBundle, VaultId, VaultKey};
+
+    fn seq(start: u8) -> [u8; 32] {
+        core::array::from_fn(|i| start.wrapping_add(u8::try_from(i).unwrap()))
+    }
+
+    let v: VaultVector = serde_json::from_str(VAULTS).unwrap();
+    // The same fixed seeds the generator used.
+    let alice = KeySet::from_seeds_for_test_vectors([seq(0x00), seq(0x20), seq(0x40), seq(0x60)]);
+    let bob = KeySet::from_seeds_for_test_vectors([seq(0x10), seq(0x30), seq(0x50), seq(0x70)]);
+    let alice_id = AccountId::from_bytes(bytes16(&v.owner_account_id_hex));
+    let bob_id = AccountId::from_bytes(bytes16(&v.recipient_account_id_hex));
+    let vault_id = VaultId::from_bytes(bytes16(&v.vault_id_hex));
+
+    let owner = hex::decode(&v.owner_wrapped_hex).unwrap();
+    let key = VaultKey::unwrap_for_owner(&owner, &alice, &alice_id, &vault_id).unwrap();
+    assert_eq!(hex::encode(key.key.as_bytes()), v.vault_key_hex);
+    assert_eq!(key.version, v.vault_key_version);
+
+    let alice_bundle =
+        PublicKeyBundle::verify_signed(&alice.signed_public_bundle(&alice_id, 1).unwrap()).unwrap();
+    let share = hex::decode(&v.share_sample_hex).unwrap();
+    let (opened_vault, opened) =
+        VaultKey::open_share(&share, &bob, &bob_id, 2, &alice_bundle).unwrap();
+    assert_eq!(opened_vault, vault_id);
+    assert_eq!(hex::encode(opened.key.as_bytes()), v.vault_key_hex);
+    assert_eq!(opened.version, v.vault_key_version);
+}

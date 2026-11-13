@@ -9,7 +9,7 @@ Protocol version 1 uses exactly the algorithms below. There are no options.
 | Hashing | SHA-256 | FIPS 180-4 |
 | Authenticated encryption | XChaCha20-Poly1305 | draft-irtf-cfrg-xchacha |
 | Password-authenticated login | OPAQUE-3DH, ristretto255, SHA-512 | RFC 9807 |
-| Public-key encryption | HPKE with the X-Wing KEM | RFC 9180, draft-connolly-cfrg-xwing-kem |
+| Public-key encryption | X-Wing KEM, then HKDF-SHA-256 and XChaCha20-Poly1305 (Section 7.4) | draft-connolly-cfrg-xwing-kem |
 | Signatures | Ed25519 and ML-DSA-65; both MUST verify | RFC 8032, FIPS 204 |
 | Unicode normalisation | NFKC | Unicode Standard Annex #15 |
 | Text encoding of keys | Crockford Base32 | Section 3.2 |

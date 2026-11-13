@@ -87,6 +87,18 @@ pub enum Error {
     /// An item envelope belongs to a different vault or item than expected.
     #[error("item belongs to a different vault or item")]
     WrongItem,
+
+    /// A public key failed validation.
+    #[error("invalid public key")]
+    InvalidPublicKey,
+
+    /// A vault share is addressed to a different account or key set.
+    #[error("vault share is addressed to someone else")]
+    WrongRecipient,
+
+    /// A vault share names a different sender than expected.
+    #[error("vault share is from an unexpected sender")]
+    WrongSender,
 }
 
 /// Why a Secret Key string was rejected.

@@ -10,7 +10,7 @@
 | 4 | [Login](04-login.md): OPAQUE registration and login, identities, session tokens | Draft, implemented |
 | 5 | [Key sets](05-key-sets.md): account keys, wrapping, signed public keys, rotation | Draft, implemented |
 | 6 | [Vault items](06-items.md): content encoding, padding, encrypted envelopes | Draft, implemented |
-| 7 | Vaults and sharing: vault keys, HPKE wrapping, membership changes | Planned |
+| 7 | [Vaults and sharing](07-vaults-and-sharing.md): vault keys, signed X-Wing shares, key replacement | Draft, implemented |
 | 8 | Revision log: hash chain, signatures, rollback and fork detection | Planned |
 | 9 | Key transparency: log structure and verification | Planned |
 | 10 | Device enrolment: adding devices, QR transfer, biometric and passkey unlock | Planned |

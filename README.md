@@ -25,7 +25,7 @@ Most password managers advertise "zero-knowledge encryption," yet research publi
 | Login (server never sees the password) | OPAQUE (RFC 9807) |
 | Encryption of vault data | XChaCha20-Poly1305 |
 | Key derivation | HKDF-SHA-256 |
-| Sharing between users | X-Wing (X25519 + ML-KEM-768) with HPKE |
+| Sharing between users | X-Wing (X25519 + ML-KEM-768), signed by the sender |
 | Signatures | Ed25519 + ML-DSA-65 |
 
 All cryptography lives in one Rust library, `vault-core`, shared by every app. The full design is in [`docs/architecture.md`](docs/architecture.md), and the protocol specification is being written in [`docs/spec/`](docs/spec/).
