@@ -11,7 +11,7 @@
 | 5 | [Key sets](05-key-sets.md): account keys, wrapping, signed public keys, rotation | Draft, implemented |
 | 6 | [Vault items](06-items.md): content encoding, padding, encrypted envelopes | Draft, implemented |
 | 7 | [Vaults and sharing](07-vaults-and-sharing.md): vault keys, signed X-Wing shares, key replacement | Draft, implemented |
-| 8 | Revision log: hash chain, signatures, rollback and fork detection | Planned |
+| 8 | [Revision log](08-revision-log.md): signed hash chain, roles, rollback and fork detection | Draft, implemented |
 | 9 | Key transparency: log structure and verification | Planned |
 | 10 | Device enrolment: adding devices, QR transfer, biometric and passkey unlock | Planned |
 | 11 | Recovery: Emergency Kit and trusted-contact access | Planned |

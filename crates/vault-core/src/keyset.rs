@@ -29,7 +29,7 @@ const LABEL_KEY_SET: &[u8] = b"BlackBoxus v1 key-set";
 const LABEL_BUNDLE: &[u8] = b"BlackBoxus v1 public-key-bundle";
 
 /// A stable, random account identifier. Not secret.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AccountId([u8; ACCOUNT_ID_LEN]);
 
 impl AccountId {

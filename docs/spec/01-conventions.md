@@ -62,3 +62,5 @@ Implementations MUST:
 | `"BlackBoxus v1 item"` | [6.4](06-items.md#64-envelope) |
 | `"BlackBoxus v1 vault-key"` | [7.3](07-vaults-and-sharing.md#73-wrapping-for-the-owner) |
 | `"BlackBoxus v1 vault-share"` | [7.4](07-vaults-and-sharing.md#74-sharing-a-vault-key) |
+| `"BlackBoxus v1 log-entry"` | [8.2](08-revision-log.md#82-entries) |
+| `"BlackBoxus v1 log-entry-hash"` | [8.2](08-revision-log.md#82-entries) |

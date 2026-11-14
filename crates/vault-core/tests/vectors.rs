@@ -294,3 +294,39 @@ fn vault_vectors_match() {
     assert_eq!(hex::encode(opened.key.as_bytes()), v.vault_key_hex);
     assert_eq!(opened.version, v.vault_key_version);
 }
+
+const LOG: &str = include_str!("../../../docs/spec/vectors/08-revision-log.json");
+
+#[derive(Deserialize)]
+struct LogVector {
+    vault_id_hex: String,
+    author_account_id_hex: String,
+    author_signed_bundle_hex: String,
+    entry0_signed_sample_hex: String,
+    entry1_signed_sample_hex: String,
+    head_seq: u64,
+    head_hash_hex: String,
+}
+
+#[test]
+fn log_vectors_match() {
+    use std::collections::HashMap;
+    use vault_core::log::verify_log;
+    use vault_core::{AccountId, VaultId};
+
+    let v: LogVector = serde_json::from_str(LOG).unwrap();
+    let vault_id = VaultId::from_bytes(bytes16(&v.vault_id_hex));
+    let author = AccountId::from_bytes(bytes16(&v.author_account_id_hex));
+    let mut bundles = HashMap::new();
+    bundles.insert(
+        (author, 1),
+        hex::decode(&v.author_signed_bundle_hex).unwrap(),
+    );
+    let entries = vec![
+        hex::decode(&v.entry0_signed_sample_hex).unwrap(),
+        hex::decode(&v.entry1_signed_sample_hex).unwrap(),
+    ];
+    let state = verify_log(&vault_id, &entries, &bundles, None).unwrap();
+    assert_eq!(state.head.seq, v.head_seq);
+    assert_eq!(hex::encode(state.head.hash), v.head_hash_hex);
+}

@@ -17,6 +17,10 @@ pub enum Error {
     /// The server's secret configuration is missing or invalid.
     #[error("invalid server configuration")]
     InvalidConfiguration,
+
+    /// A write does not extend the current state; re-read and retry.
+    #[error("conflict with a concurrent change")]
+    Conflict,
 }
 
 impl From<vault_core::Error> for Error {

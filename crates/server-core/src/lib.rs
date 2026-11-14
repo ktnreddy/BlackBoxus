@@ -12,6 +12,7 @@
 //! rewriting only that adapter.
 
 mod error;
+pub mod log;
 pub mod login;
 pub mod prelogin;
 

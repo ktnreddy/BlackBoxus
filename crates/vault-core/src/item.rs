@@ -39,7 +39,7 @@ const LABEL_ITEM: &[u8] = b"BlackBoxus v1 item";
 macro_rules! id_type {
     ($(#[$doc:meta])* $name:ident) => {
         $(#[$doc])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name([u8; ID_LEN]);
 
         impl $name {

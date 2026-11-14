@@ -99,6 +99,20 @@ pub enum Error {
     /// A vault share names a different sender than expected.
     #[error("vault share is from an unexpected sender")]
     WrongSender,
+
+    /// A revision log is broken, breaks a permission rule, or does not
+    /// match the data it describes.
+    #[error("vault history is invalid")]
+    LogMismatch,
+
+    /// The server returned an older vault history than this device has seen.
+    #[error("vault history was rolled back")]
+    LogRollback,
+
+    /// The server returned a vault history that conflicts with one this
+    /// device has seen.
+    #[error("vault history was altered")]
+    LogFork,
 }
 
 /// Why a Secret Key string was rejected.

@@ -38,6 +38,7 @@ mod item;
 mod kdf;
 mod key;
 mod keyset;
+pub mod log;
 pub mod login;
 mod password;
 mod random;
