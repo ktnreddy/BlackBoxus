@@ -113,6 +113,10 @@ pub enum Error {
     /// device has seen.
     #[error("vault history was altered")]
     LogFork,
+
+    /// A key transparency proof did not verify.
+    #[error("key transparency proof is invalid")]
+    InvalidProof,
 }
 
 /// Why a Secret Key string was rejected.

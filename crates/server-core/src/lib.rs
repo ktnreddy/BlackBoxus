@@ -15,6 +15,7 @@ mod error;
 pub mod log;
 pub mod login;
 pub mod prelogin;
+pub mod transparency;
 
 pub use error::{Error, Result};
 

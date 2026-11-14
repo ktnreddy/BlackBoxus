@@ -33,7 +33,11 @@ pub struct IdentitySecretKey {
 
 impl IdentitySecretKey {
     /// Generates new identity keys.
-    pub(crate) fn generate() -> Result<Self> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RandomUnavailable`] if the generator fails.
+    pub fn generate() -> Result<Self> {
         Ok(Self {
             ed25519_seed: random::bytes()?,
             ml_dsa_seed: random::bytes()?,
@@ -46,6 +50,33 @@ impl IdentitySecretKey {
             ed25519_seed,
             ml_dsa_seed,
         }
+    }
+
+    /// Exports both seeds (`ed25519 ‖ ml_dsa`), for example to store a
+    /// server signing key in a secret store. Erased on drop.
+    #[must_use]
+    pub fn to_seed_bytes(&self) -> zeroize::Zeroizing<[u8; 64]> {
+        let mut out = zeroize::Zeroizing::new([0_u8; 64]);
+        let (ed, ml) = out.split_at_mut(32);
+        ed.copy_from_slice(&self.ed25519_seed);
+        ml.copy_from_slice(&self.ml_dsa_seed);
+        out
+    }
+
+    /// Loads seeds produced by [`IdentitySecretKey::to_seed_bytes`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::MalformedMessage`] if the length is not 64 bytes.
+    pub fn from_seed_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != 64 {
+            return Err(Error::MalformedMessage);
+        }
+        let (ed, ml) = bytes.split_at(32);
+        Ok(Self {
+            ed25519_seed: ed.try_into().map_err(|_| Error::MalformedMessage)?,
+            ml_dsa_seed: ml.try_into().map_err(|_| Error::MalformedMessage)?,
+        })
     }
 
     /// The Ed25519 seed.

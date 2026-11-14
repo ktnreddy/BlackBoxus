@@ -44,6 +44,7 @@ mod password;
 mod random;
 mod secret_key;
 mod signature;
+pub mod transparency;
 mod vault;
 mod xwing;
 

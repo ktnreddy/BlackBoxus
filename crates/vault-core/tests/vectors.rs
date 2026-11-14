@@ -330,3 +330,84 @@ fn log_vectors_match() {
     assert_eq!(state.head.seq, v.head_seq);
     assert_eq!(hex::encode(state.head.hash), v.head_hash_hex);
 }
+
+const KT: &str = include_str!("../../../docs/spec/vectors/09-key-transparency.json");
+
+#[derive(Deserialize)]
+struct KtVector {
+    leaves_hex: Vec<String>,
+    roots_by_size_hex: Vec<String>,
+    inclusion: InclusionJson,
+    consistency: ConsistencyJson,
+    log_ed25519_public_key_hex: String,
+    log_ml_dsa_public_key_hex: String,
+    signed_tree_head_sample_hex: String,
+    fingerprint_account_id_hex: String,
+    fingerprint_signed_bundle_hex: String,
+    fingerprint: String,
+}
+
+#[derive(Deserialize)]
+struct InclusionJson {
+    leaf_index: u64,
+    tree_size: u64,
+    proof_hex: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct ConsistencyJson {
+    first_size: u64,
+    second_size: u64,
+    proof_hex: Vec<String>,
+}
+
+fn hash32(s: &str) -> [u8; 32] {
+    hex::decode(s).unwrap().try_into().unwrap()
+}
+
+#[test]
+fn key_transparency_vectors_match() {
+    use vault_core::transparency::{
+        TreeHead, fingerprint, leaf_hash, verify_consistency, verify_inclusion,
+    };
+    use vault_core::{AccountId, IdentityPublicKey};
+
+    let v: KtVector = serde_json::from_str(KT).unwrap();
+    let roots: Vec<[u8; 32]> = v.roots_by_size_hex.iter().map(|r| hash32(r)).collect();
+    let leaf =
+        hex::decode(&v.leaves_hex[usize::try_from(v.inclusion.leaf_index).unwrap()]).unwrap();
+
+    let proof: Vec<[u8; 32]> = v.inclusion.proof_hex.iter().map(|p| hash32(p)).collect();
+    verify_inclusion(
+        v.inclusion.leaf_index,
+        v.inclusion.tree_size,
+        &leaf_hash(&leaf),
+        &proof,
+        &roots[usize::try_from(v.inclusion.tree_size).unwrap()],
+    )
+    .unwrap();
+
+    let proof: Vec<[u8; 32]> = v.consistency.proof_hex.iter().map(|p| hash32(p)).collect();
+    verify_consistency(
+        v.consistency.first_size,
+        v.consistency.second_size,
+        &roots[usize::try_from(v.consistency.first_size).unwrap()],
+        &roots[usize::try_from(v.consistency.second_size).unwrap()],
+        &proof,
+    )
+    .unwrap();
+
+    let mut log_key = hex::decode(&v.log_ed25519_public_key_hex).unwrap();
+    log_key.extend(hex::decode(&v.log_ml_dsa_public_key_hex).unwrap());
+    let head = TreeHead::verify_signed(
+        &hex::decode(&v.signed_tree_head_sample_hex).unwrap(),
+        &IdentityPublicKey::from_bytes(&log_key).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(head.tree_size, 7);
+    assert_eq!(head.root_hash, roots[7]);
+
+    let account = AccountId::from_bytes(bytes16(&v.fingerprint_account_id_hex));
+    let bundle = hex::decode(&v.fingerprint_signed_bundle_hex).unwrap();
+    assert_eq!(fingerprint(&account, &bundle), v.fingerprint);
+}

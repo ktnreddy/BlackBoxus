@@ -64,3 +64,5 @@ Implementations MUST:
 | `"BlackBoxus v1 vault-share"` | [7.4](07-vaults-and-sharing.md#74-sharing-a-vault-key) |
 | `"BlackBoxus v1 log-entry"` | [8.2](08-revision-log.md#82-entries) |
 | `"BlackBoxus v1 log-entry-hash"` | [8.2](08-revision-log.md#82-entries) |
+| `"BlackBoxus v1 tree-head"` | [9.3](09-key-transparency.md#93-tree-proofs-and-tree-heads) |
+| `"BlackBoxus v1 fingerprint"` | [9.5](09-key-transparency.md#95-monitoring-and-safety-numbers) |
