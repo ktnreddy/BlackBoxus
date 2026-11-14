@@ -28,11 +28,14 @@ jobs:
         with:
           toolchain: 1.97.0
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked
+      - name: Clippy (server on WebAssembly)
+        run: cargo clippy -p server-worker --target wasm32-unknown-unknown --locked
       - name: Test
         run: cargo test --workspace --all-features --locked
 
@@ -46,3 +49,86 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check
+
+  deploy:
+    name: Deploy server
+    # Only after every check has passed on main.
+    needs: [rust, dependencies]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WRANGLER_SEND_METRICS: "false"
+    defaults:
+      run:
+        working-directory: crates/server-worker
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: 1.97.0
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: deploy
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/server-worker/package-lock.json
+      - name: Install build tools
+        run: |
+          cargo install --locked worker-build@0.9.0
+          npm ci --no-audit --no-fund
+      - name: Find or create the database
+        run: |
+          set -euo pipefail
+          find_id() { npx wrangler d1 list --json | jq -r '.[] | select(.name == "blackboxus") | .uuid'; }
+          id=$(find_id)
+          if [ -z "$id" ]; then
+            npx wrangler d1 create blackboxus
+            id=$(find_id)
+          fi
+          [[ "$id" =~ ^[0-9a-f-]{36}$ ]] || { echo "::error::Could not find the D1 database"; exit 1; }
+          sed -i "s/00000000-0000-0000-0000-000000000000/$id/" wrangler.toml
+      - name: Apply database migrations
+        run: npx wrangler d1 migrations apply blackboxus --remote
+      - name: Deploy
+        run: npx wrangler deploy --message "${GITHUB_SHA::7}"
+      - name: Create server secrets on first deploy
+        # Secrets are generated here and sent straight to Cloudflare; nobody
+        # sees them. They are only created when none exist, because new
+        # secrets would break every existing login.
+        run: |
+          set -euo pipefail
+          names=$(npx wrangler secret list --format json | jq -r '.[].name' | sort | tr '\n' ' ')
+          case "$names" in
+            "FAKE_SALT_KEY LOG_SIGNING_KEY OPAQUE_SETUP ")
+              echo "Server secrets already exist." ;;
+            "")
+              file="$RUNNER_TEMP/secrets.json"
+              cargo run --locked --release -p server-worker --example generate_secrets -- "$file" > "$RUNNER_TEMP/log-key.txt"
+              npx wrangler secret bulk "$file"
+              shred -u "$file"
+              cat "$RUNNER_TEMP/log-key.txt"
+              { echo "### Key transparency log public key"; echo; echo '```'; tail -1 "$RUNNER_TEMP/log-key.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY" ;;
+            *)
+              echo "::error::Only some server secrets exist ($names). Fix this by hand; refusing to overwrite."
+              exit 1 ;;
+          esac
+      - name: Check the server answers
+        run: |
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS -X POST https://api.blackboxus.workers.dev/v1/prelogin \
+                 -H 'Content-Type: application/json' -d '{"email":"deploy-check@example.com"}' | grep -q '"kdf"'; then
+              echo "Server is up."; exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::The server did not answer correctly"; exit 1

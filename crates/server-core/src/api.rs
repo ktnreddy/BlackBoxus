@@ -357,6 +357,16 @@ impl Api {
         Ok(updated)
     }
 
+    /// Signs the log's current tree head. The adapter stores the result with
+    /// the log, atomically, every time a leaf is appended.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidConfiguration`] if signing fails.
+    pub fn sign_tree_head(&self, log: &KtLog, now_ms: u64) -> Result<Vec<u8>> {
+        log.signed_tree_head(&self.log_key, now_ms)
+    }
+
     /// `GET /v1/accounts/{id}/keys`: a key lookup with proofs against a
     /// freshly signed tree head. `seen_size` is the tree size the client
     /// last saw, if any.
@@ -374,7 +384,34 @@ impl Api {
         seen_size: Option<u64>,
         now_ms: u64,
     ) -> Result<KeyLookupResponse> {
+        let head = self.sign_tree_head(log, now_ms)?;
+        Self::key_lookup_with_head(log, account, leaf, leaf_index, seen_size, head)
+    }
+
+    /// Like [`Api::key_lookup`], but answers with the tree head stored by
+    /// the adapter when the log last grew, instead of signing a new one.
+    /// This keeps each lookup cheap.
+    ///
+    /// # Errors
+    ///
+    /// As [`Api::key_lookup`]; also [`Error::InvalidConfiguration`] if the
+    /// stored head is not for the log's current size.
+    pub fn key_lookup_with_head(
+        log: &KtLog,
+        account: &AccountRecord,
+        leaf: &[u8],
+        leaf_index: u64,
+        seen_size: Option<u64>,
+        signed_tree_head: Vec<u8>,
+    ) -> Result<KeyLookupResponse> {
         let size = log.size();
+        let head_size = signed_tree_head
+            .get(2..10)
+            .and_then(|b| <[u8; 8]>::try_from(b).ok())
+            .map(u64::from_be_bytes);
+        if head_size != Some(size) {
+            return Err(Error::InvalidConfiguration);
+        }
         let consistency_proof = match seen_size {
             Some(old) if old > size => return Err(Error::MalformedMessage),
             Some(old) if old > 0 => log.consistency_proof(old, size)?,
@@ -385,7 +422,7 @@ impl Api {
             leaf: leaf.to_vec(),
             leaf_index,
             inclusion_proof: log.inclusion_proof(leaf_index, size)?,
-            signed_tree_head: log.signed_tree_head(&self.log_key, now_ms)?,
+            signed_tree_head,
             consistency_proof,
         })
     }

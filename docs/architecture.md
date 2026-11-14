@@ -46,7 +46,7 @@ What the server can still see, and the known limits of these guarantees, are lis
 | iOS app | Swift, SwiftUI, `vault-core` via UniFFI | Trusted device |
 | API | Rust on Cloudflare Workers | Untrusted |
 | Database | Cloudflare D1 (SQLite) | Untrusted; ciphertext and public data only |
-| Sync coordination | Cloudflare Durable Objects (one per vault), WebSocket "vault changed" notifications | Untrusted |
+| Sync coordination | Cloudflare Durable Objects (one per vault), WebSocket "vault changed" notifications (planned) | Untrusted |
 | Website | Cloudflare Pages | Information only; there is no web vault |
 
 There is deliberately no browser-served web vault. A web vault downloads its code from the server, so a compromised server could ship code that steals passwords.

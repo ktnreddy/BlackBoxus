@@ -12,18 +12,22 @@ use vault_core::transparency::{Hash, LEAF_LEN, TreeHead, empty_root, leaf_hash, 
 use crate::error::{Error, Result};
 
 /// An append-only key transparency log.
+///
+/// Besides the leaf hashes, the log keeps the hash of every complete,
+/// aligned subtree, so the root and any proof take `O(log n)` hashing
+/// instead of rehashing the whole tree.
 #[derive(Debug, Default, Clone)]
 pub struct KtLog {
-    leaf_hashes: Vec<Hash>,
+    /// `levels[h][i]` is the hash of leaves `i·2^h .. (i+1)·2^h`; only
+    /// complete subtrees are kept, so `levels[h].len() == size >> h`.
+    levels: Vec<Vec<Hash>>,
 }
 
 impl KtLog {
     /// An empty log.
     #[must_use]
     pub const fn new() -> Self {
-        Self {
-            leaf_hashes: Vec::new(),
-        }
+        Self { levels: Vec::new() }
     }
 
     /// Rebuilds a log from stored leaves, in order.
@@ -39,6 +43,49 @@ impl KtLog {
         Ok(log)
     }
 
+    /// Restores a log of `size` leaves from [`KtLog::to_stored`].
+    ///
+    /// The stored subtree hashes are trusted as written; a storage adapter
+    /// that cannot trust its own storage gains nothing from rechecking them,
+    /// because clients verify every proof against a signed tree head.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::MalformedMessage`] if the length does not match
+    /// `size`.
+    pub fn from_stored(size: u64, bytes: &[u8]) -> Result<Self> {
+        let n = usize::try_from(size).map_err(|_| Error::MalformedMessage)?;
+        let (chunks, rest) = bytes.as_chunks::<32>();
+        if !rest.is_empty() {
+            return Err(Error::MalformedMessage);
+        }
+        let mut levels = Vec::new();
+        let mut at = 0_usize;
+        let mut width = n;
+        while width > 0 {
+            let next = at.checked_add(width).ok_or(Error::MalformedMessage)?;
+            levels.push(
+                chunks
+                    .get(at..next)
+                    .ok_or(Error::MalformedMessage)?
+                    .to_vec(),
+            );
+            at = next;
+            width >>= 1;
+        }
+        if at != chunks.len() {
+            return Err(Error::MalformedMessage);
+        }
+        Ok(Self { levels })
+    }
+
+    /// Every stored subtree hash, level by level, for [`KtLog::from_stored`].
+    /// About `64 × size` bytes.
+    #[must_use]
+    pub fn to_stored(&self) -> Vec<u8> {
+        self.levels.iter().flatten().flatten().copied().collect()
+    }
+
     /// Appends an encoded leaf and returns its index.
     ///
     /// # Errors
@@ -48,15 +95,34 @@ impl KtLog {
         if leaf.len() != LEAF_LEN {
             return Err(Error::MalformedMessage);
         }
-        let index = u64::try_from(self.leaf_hashes.len()).map_err(|_| Error::MalformedMessage)?;
-        self.leaf_hashes.push(leaf_hash(leaf));
+        let index = self.size();
+        let mut hash = leaf_hash(leaf);
+        let mut level = 0_usize;
+        loop {
+            if self.levels.len() == level {
+                self.levels.push(Vec::new());
+            }
+            let row = self.levels.get_mut(level).ok_or(Error::MalformedMessage)?;
+            row.push(hash);
+            let len = row.len();
+            if len & 1 == 1 {
+                break;
+            }
+            match row.get(len.wrapping_sub(2)..) {
+                Some([left, right]) => hash = node_hash(left, right),
+                _ => return Err(Error::MalformedMessage),
+            }
+            level = level.wrapping_add(1);
+        }
         Ok(index)
     }
 
     /// Number of leaves.
     #[must_use]
     pub fn size(&self) -> u64 {
-        u64::try_from(self.leaf_hashes.len()).unwrap_or(u64::MAX)
+        self.levels
+            .first()
+            .map_or(0, |l| u64::try_from(l.len()).unwrap_or(u64::MAX))
     }
 
     /// The Merkle root of the first `size` leaves.
@@ -65,12 +131,11 @@ impl KtLog {
     ///
     /// Returns [`Error::MalformedMessage`] if `size` exceeds the log size.
     pub fn root(&self, size: u64) -> Result<Hash> {
-        let leaves = self.prefix(size)?;
-        Ok(if leaves.is_empty() {
-            empty_root()
-        } else {
-            mth(leaves)
-        })
+        let n = self.prefix(size)?;
+        if n == 0 {
+            return Ok(empty_root());
+        }
+        self.mth(0, n)
     }
 
     /// Inclusion proof for leaf `index` in the tree of `size` leaves.
@@ -80,13 +145,13 @@ impl KtLog {
     /// Returns [`Error::MalformedMessage`] if `index` or `size` is out of
     /// range.
     pub fn inclusion_proof(&self, index: u64, size: u64) -> Result<Vec<Hash>> {
-        let leaves = self.prefix(size)?;
+        let n = self.prefix(size)?;
         let m = usize::try_from(index).map_err(|_| Error::MalformedMessage)?;
-        if m >= leaves.len() {
+        if m >= n {
             return Err(Error::MalformedMessage);
         }
         let mut proof = Vec::new();
-        path(m, leaves, &mut proof);
+        self.path(m, 0, n, &mut proof)?;
         Ok(proof)
     }
 
@@ -97,14 +162,14 @@ impl KtLog {
     ///
     /// Returns [`Error::MalformedMessage`] if the sizes are out of range.
     pub fn consistency_proof(&self, old_size: u64, new_size: u64) -> Result<Vec<Hash>> {
-        let leaves = self.prefix(new_size)?;
+        let n = self.prefix(new_size)?;
         let m = usize::try_from(old_size).map_err(|_| Error::MalformedMessage)?;
-        if m > leaves.len() {
+        if m > n {
             return Err(Error::MalformedMessage);
         }
         let mut proof = Vec::new();
-        if m > 0 && m < leaves.len() {
-            subproof(m, leaves, true, &mut proof);
+        if m > 0 && m < n {
+            self.subproof(m, 0, n, true, &mut proof)?;
         }
         Ok(proof)
     }
@@ -128,9 +193,79 @@ impl KtLog {
         .map_err(|_| Error::InvalidConfiguration)
     }
 
-    fn prefix(&self, size: u64) -> Result<&[Hash]> {
+    fn prefix(&self, size: u64) -> Result<usize> {
         let n = usize::try_from(size).map_err(|_| Error::MalformedMessage)?;
-        self.leaf_hashes.get(..n).ok_or(Error::MalformedMessage)
+        let have = self.levels.first().map_or(0, Vec::len);
+        if n > have {
+            return Err(Error::MalformedMessage);
+        }
+        Ok(n)
+    }
+
+    /// `MTH(D[lo:hi])` for a non-empty range (RFC 9162, Section 2.1.1),
+    /// using stored subtree hashes where the range is a complete subtree.
+    fn mth(&self, lo: usize, hi: usize) -> Result<Hash> {
+        let n = hi.checked_sub(lo).ok_or(Error::MalformedMessage)?;
+        if n == 0 {
+            return Err(Error::MalformedMessage);
+        }
+        if n.is_power_of_two() && lo.is_multiple_of(n) {
+            let level = usize::try_from(n.trailing_zeros()).map_err(|_| Error::MalformedMessage)?;
+            return self
+                .levels
+                .get(level)
+                .and_then(|row| row.get(lo >> level))
+                .copied()
+                .ok_or(Error::MalformedMessage);
+        }
+        let mid = lo.checked_add(split(n)).ok_or(Error::MalformedMessage)?;
+        Ok(node_hash(&self.mth(lo, mid)?, &self.mth(mid, hi)?))
+    }
+
+    /// `PATH(m, D[lo:hi])` (RFC 9162, Section 2.1.3.1); `m` is relative to `lo`.
+    fn path(&self, m: usize, lo: usize, hi: usize, out: &mut Vec<Hash>) -> Result<()> {
+        let n = hi.checked_sub(lo).ok_or(Error::MalformedMessage)?;
+        if n <= 1 {
+            return Ok(());
+        }
+        let k = split(n);
+        let mid = lo.checked_add(k).ok_or(Error::MalformedMessage)?;
+        if m < k {
+            self.path(m, lo, mid, out)?;
+            out.push(self.mth(mid, hi)?);
+        } else {
+            self.path(m.wrapping_sub(k), mid, hi, out)?;
+            out.push(self.mth(lo, mid)?);
+        }
+        Ok(())
+    }
+
+    /// `SUBPROOF(m, D[lo:hi], b)` (RFC 9162, Section 2.1.4.1).
+    fn subproof(
+        &self,
+        m: usize,
+        lo: usize,
+        hi: usize,
+        complete: bool,
+        out: &mut Vec<Hash>,
+    ) -> Result<()> {
+        let n = hi.checked_sub(lo).ok_or(Error::MalformedMessage)?;
+        if m == n {
+            if !complete {
+                out.push(self.mth(lo, hi)?);
+            }
+            return Ok(());
+        }
+        let k = split(n);
+        let mid = lo.checked_add(k).ok_or(Error::MalformedMessage)?;
+        if m <= k {
+            self.subproof(m, lo, mid, complete, out)?;
+            out.push(self.mth(mid, hi)?);
+        } else {
+            self.subproof(m.wrapping_sub(k), mid, hi, false, out)?;
+            out.push(self.mth(lo, mid)?);
+        }
+        Ok(())
     }
 }
 
@@ -138,54 +273,6 @@ impl KtLog {
 const fn split(n: usize) -> usize {
     let p = n.next_power_of_two();
     if p == n { n >> 1 } else { p >> 1 }
-}
-
-/// `MTH(D[n])` for a non-empty list (RFC 9162, Section 2.1.1).
-fn mth(leaves: &[Hash]) -> Hash {
-    match leaves {
-        [] => empty_root(),
-        [one] => *one,
-        _ => {
-            let (left, right) = leaves.split_at(split(leaves.len()));
-            node_hash(&mth(left), &mth(right))
-        }
-    }
-}
-
-/// `PATH(m, D[n])` (RFC 9162, Section 2.1.3.1).
-fn path(m: usize, leaves: &[Hash], out: &mut Vec<Hash>) {
-    if leaves.len() <= 1 {
-        return;
-    }
-    let k = split(leaves.len());
-    let (left, right) = leaves.split_at(k);
-    if m < k {
-        path(m, left, out);
-        out.push(mth(right));
-    } else {
-        path(m.saturating_sub(k), right, out);
-        out.push(mth(left));
-    }
-}
-
-/// `SUBPROOF(m, D[n], b)` (RFC 9162, Section 2.1.4.1).
-fn subproof(m: usize, leaves: &[Hash], complete: bool, out: &mut Vec<Hash>) {
-    let n = leaves.len();
-    if m == n {
-        if !complete {
-            out.push(mth(leaves));
-        }
-        return;
-    }
-    let k = split(n);
-    let (left, right) = leaves.split_at(k);
-    if m <= k {
-        subproof(m, left, complete, out);
-        out.push(mth(right));
-    } else {
-        subproof(m.saturating_sub(k), right, false, out);
-        out.push(mth(left));
-    }
 }
 
 #[cfg(test)]
@@ -198,6 +285,40 @@ mod tests {
         l[1] = 1;
         l[2..10].copy_from_slice(&i.to_be_bytes());
         l
+    }
+
+    #[test]
+    fn stored_form_round_trips_and_matches_a_plain_tree() {
+        for n in [0_u64, 1, 2, 3, 7, 8, 13, 64, 100] {
+            let log = log_of(n);
+            let stored = log.to_stored();
+            let restored = KtLog::from_stored(n, &stored).unwrap();
+            assert_eq!(restored.size(), n);
+            for size in 0..=n {
+                assert_eq!(restored.root(size).unwrap(), plain_root(&leaves(size)));
+            }
+            if n > 0 {
+                assert!(KtLog::from_stored(n, &stored[..stored.len() - 32]).is_err());
+                assert!(KtLog::from_stored(n + 1, &stored).is_err());
+                assert!(KtLog::from_stored(n, &stored[..stored.len() - 1]).is_err());
+            }
+        }
+    }
+
+    fn leaves(n: u64) -> Vec<Hash> {
+        (0..n).map(|i| leaf_hash(&leaf(i))).collect()
+    }
+
+    /// RFC 9162 `MTH` computed directly, as an independent reference.
+    fn plain_root(hashes: &[Hash]) -> Hash {
+        match hashes {
+            [] => empty_root(),
+            [one] => *one,
+            _ => {
+                let (l, r) = hashes.split_at(split(hashes.len()));
+                node_hash(&plain_root(l), &plain_root(r))
+            }
+        }
     }
 
     fn log_of(n: u64) -> KtLog {

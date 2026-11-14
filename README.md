@@ -67,7 +67,7 @@ cargo clippy --all-targets -- -D warnings
 
 1. Protocol specification and threat model
 2. `vault-core`: key derivation, item encryption, login, sharing
-3. Server on Cloudflare
+3. Server on Cloudflare (running at `https://api.blackboxus.workers.dev`; see [docs/deployment.md](docs/deployment.md))
 4. Desktop app and browser extension
 5. Android app
 6. iOS app

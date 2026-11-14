@@ -6,13 +6,13 @@ This section defines the HTTP API between clients and the BlackBoxus server, and
 
 The server is untrusted (see `docs/architecture.md`). Its checks protect availability and keep honest clients from making mistakes; clients never rely on them for confidentiality or integrity, which come from the cryptography of Sections 3–11.
 
-The request handling lives in `server-core` and does no I/O: each handler receives the records the hosting adapter loaded and returns what to store or send. The adapter (Cloudflare Workers with D1 and Durable Objects) is responsible only for storage, atomicity, deleting one-time records, and rate limiting.
+The request handling lives in `server-core` and does no I/O: each handler receives the records the hosting adapter loaded and returns what to store or send. The adapter, `server-worker` on Cloudflare Workers and D1 (12.11), is responsible only for storage, atomicity, deleting one-time records, and rate limiting.
 
 ## 12.2 Transport and encoding
 
 - The API is served only over HTTPS. Responses carry `Strict-Transport-Security: max-age=63072000`, `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`. The server sets no cookies and sends no CORS headers: there is no web vault, so no browser origin needs access.
 - All paths start with `/v1`. Request and response bodies are JSON objects (`Content-Type: application/json`).
-- Binary values are base64url without padding (RFC 4648, Section 5). Clients and the server MUST reject padded or non-canonical encodings.
+- Binary values are base64url without padding (RFC 4648, Section 5), including IDs in paths. Clients and the server MUST reject padded or non-canonical encodings.
 - Integers are JSON numbers and never exceed 2^53 − 1. Times are Unix milliseconds.
 - Request bodies are limited to 1 MiB. Unknown JSON fields MUST be rejected.
 
@@ -28,6 +28,9 @@ Errors are returned as `{"error": "<code>"}`:
 | `too_early` | 403 | A waiting period (Section 11.5) has not passed. |
 | `conflict` | 409 | The write does not extend the current state; re-read and retry. |
 | `rate_limited` | 429 | Too many requests; `Retry-After` says when to retry. |
+| `not_found` | 404 | No such endpoint, or an ID that does not exist. |
+| `not_implemented` | 501 | An endpoint of this section that the running version does not serve yet. |
+| `server_error` | 500 | The server is misconfigured or its storage failed. |
 
 Error responses never reveal whether an email address has an account.
 
@@ -83,7 +86,7 @@ Limits per email address apply equally to addresses without an account, so they 
 | `PUT /v1/keyset/wrapped` | `{method, credential_id?, data}` → `{}` | Method is 2 (passkey, with a credential ID of at most 1023 bytes), 4 or 5; header matches the current key set version and the method. |
 | `DELETE /v1/keyset/wrapped` | `{method, credential_id?}` → `{}` | Deletes that copy. Method 1 cannot be deleted. |
 | `POST /v1/password` | `{upload, salt, kdf, wrapped_key_set}` → `{}` | Session less than 5 minutes old. As for `register/finish`; ends all other sessions. |
-| `GET /v1/accounts/{account_id}/keys?seen={tree_size}` | → `{signed_bundle, leaf, leaf_index, inclusion_proof, signed_tree_head, consistency_proof}` | `seen` is not larger than the log. Proofs are against a freshly signed tree head (9.4). |
+| `GET /v1/accounts/{account_id}/keys?seen={tree_size}` | → `{signed_bundle, leaf, leaf_index, inclusion_proof, signed_tree_head, consistency_proof}` | `seen` is not larger than the log. Proofs are against the latest signed tree head, which the server signs on the first lookup after the log grows (9.4). |
 | `GET /v1/accounts/self/leaves` | → `{leaves: [{leaf, leaf_index, inclusion_proof}], signed_tree_head}` | All leaves for this account, for self-monitoring (9.5). |
 | `PUT /v1/enrolment/{session_id}` | `{sealed}` → `{}` | 96 to 8192 bytes; no transfer already stored under this ID (10.3). |
 | `POST /v1/vaults/{vault_id}/log` | `{entry, items: [{item_id, revision, envelope}]}` → `{seq}` | Entry is at most 4096 bytes, parses, is for this vault and extends the current head (8.6); envelopes are within the size limits (6.4). Entry and envelopes are stored atomically. |
@@ -111,4 +114,18 @@ The server cannot check vault roles, because they are defined by the signed revi
 
 ## 12.10 Tests
 
-`server-core` tests the handlers directly, and `crates/server-core/tests/api_flow.rs` runs a complete account lifecycle against an in-memory adapter: account creation, real and fake prelogin, login with right and wrong credentials, key lookups verified through key transparency, adding a device by QR code, session expiry and logout.
+`server-core` tests the handlers directly, and `crates/server-core/tests/api_flow.rs` runs a complete account lifecycle against an in-memory adapter: account creation, real and fake prelogin, login with right and wrong credentials, key lookups verified through key transparency, adding a device by QR code, session expiry and logout. `crates/server-worker` tests routing, encodings, errors and rate limit keys natively, and the same lifecycle has been run against the Worker locally with a D1 database.
+
+## 12.11 Deployment
+
+The server runs on Cloudflare Workers (Free plan) with one D1 database, and is served at `https://api.blackboxus.workers.dev`. Every check in this section is made by `server-core`; `crates/server-worker` only connects it to HTTP and storage.
+
+- **Secrets.** The OPAQUE server setup, the fake-salt key (3.8) and the key transparency log key (9.3) are generated once, by the deploy workflow, and sent straight to Cloudflare's secret store. They never appear in the repository or in logs. The workflow refuses to replace them, because new secrets would invalidate every login and every client's trust in the log.
+- **Atomicity.** Creating an account and appending its key transparency leaf happen in one D1 transaction. Leaf indexes are primary keys, so two concurrent appends cannot both succeed; the loser receives `conflict`.
+- **Rate limits.** The limits of 12.5 are fixed 15-minute windows counted in D1, which makes them exact across Cloudflare locations. Counters store only a hash of the email address, IP address or session they limit.
+- **CPU budget.** Each request must use under 10 ms of CPU. Measured in WebAssembly with SIMD enabled, the most expensive operations take about 1.5 ms (signing a tree head) and 1.8 ms (a full OPAQUE login, client and server together).
+- **Key log size.** The log's subtree hashes are kept in one D1 row of about 85 bytes per account, which D1's 2 MB row limit caps at roughly 23,000 accounts. Before then, the tree must move to one row per level.
+- **Clean-up.** A daily scheduled job deletes expired logins, enrolment transfers, sessions and rate limit windows.
+
+This version serves the endpoints for accounts, login, sessions, key lookups and device enrolment. The vault, sharing, recovery, emergency access, password change and self-monitoring endpoints answer `not_implemented` until the clients that use them exist.
+

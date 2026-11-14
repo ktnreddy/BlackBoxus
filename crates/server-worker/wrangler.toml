@@ -1,0 +1,29 @@
+# Cloudflare configuration for the BlackBoxus server.
+# The Worker is served at https://api.<account subdomain>.workers.dev.
+name = "api"
+main = "build/index.js"
+compatibility_date = "2026-06-01"
+workers_dev = true
+preview_urls = false
+
+[build]
+# SIMD makes the post-quantum signatures about twice as fast, which keeps
+# every request inside the Free plan's 10 ms CPU limit.
+command = "RUSTFLAGS='-C target-feature=+simd128' worker-build --release"
+
+[vars]
+SERVER_ORIGIN = "https://api.blackboxus.workers.dev"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "blackboxus"
+# Filled in by the deploy workflow, which looks the database up by name.
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[triggers]
+# Daily cleanup of expired logins, transfers, sessions and rate limits.
+crons = ["17 3 * * *"]
+
+[observability]
+enabled = true
