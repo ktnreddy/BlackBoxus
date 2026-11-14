@@ -42,6 +42,7 @@ mod item;
 mod kdf;
 mod key;
 mod keyset;
+pub mod local;
 pub mod log;
 pub mod login;
 mod password;
@@ -72,7 +73,7 @@ pub use signature::{
     HYBRID_SIGNATURE_LEN, HybridSignature, IDENTITY_PUBLIC_LEN, IdentityPublicKey,
     IdentitySecretKey, MAX_CONTEXT_LEN,
 };
-pub use vault::{OWNER_WRAPPED_VAULT_KEY_LEN, VAULT_SHARE_LEN, VaultKey};
+pub use vault::{OWNER_WRAPPED_VAULT_KEY_LEN, ShareInfo, VAULT_SHARE_LEN, VaultKey};
 pub use xwing::{XWING_CIPHERTEXT_LEN, XWING_PUBLIC_LEN, XWingPublicKey};
 
 /// The wire and storage protocol version implemented by this library.

@@ -16,10 +16,6 @@ pub const TAG_LEN: usize = 16;
 
 /// Encrypts `plaintext` with a fresh random nonce. Returns
 /// `nonce ‖ ciphertext ‖ tag`.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "kept for future single-key encryption")
-)]
 pub(crate) fn seal(key: &SymmetricKey, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
     let nonce: [u8; NONCE_LEN] = random::bytes()?;
     seal_with_nonce(key, &nonce, plaintext, aad)

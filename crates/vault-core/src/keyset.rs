@@ -72,7 +72,9 @@ pub enum UnlockMethod {
 }
 
 impl UnlockMethod {
-    const fn code(self) -> u8 {
+    /// The method's code in wrapped key sets and the server API (spec section 5.4).
+    #[must_use]
+    pub const fn code(self) -> u8 {
         match self {
             Self::MasterPassword => 1,
             Self::Passkey => 2,

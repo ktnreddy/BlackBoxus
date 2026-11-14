@@ -40,6 +40,7 @@ What the server can still see, and the known limits of these guarantees, are lis
 | Component | Technology | Trust |
 | --- | --- | --- |
 | `vault-core` | Rust | Trusted; all cryptography |
+| `client-core` | Rust, no I/O | Trusted; sequences `vault-core` and checks every server answer |
 | Desktop app | Tauri 2, TypeScript UI | Trusted device |
 | Browser extension | TypeScript, `vault-core` compiled to WebAssembly | Trusted device; autofill picker outside page DOM |
 | Android app | Kotlin, Jetpack Compose, `vault-core` via UniFFI | Trusted device |

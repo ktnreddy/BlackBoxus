@@ -214,6 +214,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "client-core"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "server-core",
+ "server-worker",
+ "thiserror",
+ "vault-core",
+ "wire",
+ "zeroize",
+]
+
+[[package]]
 name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1516,6 +1530,7 @@ dependencies = [
  "server-core",
  "sha2 0.11.1",
  "vault-core",
+ "wire",
  "worker",
  "zeroize",
 ]
@@ -1936,6 +1951,15 @@ name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
+
+[[package]]
+name = "wire"
+version = "0.0.1"
+dependencies = [
+ "base64ct",
+ "serde",
+ "vault-core",
+]
 
 [[package]]
 name = "worker"

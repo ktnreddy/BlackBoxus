@@ -68,6 +68,7 @@ Implementations MUST:
 | `"BlackBoxus v1 fingerprint"` | [9.5](09-key-transparency.md#95-monitoring-and-safety-numbers) |
 | `"BlackBoxus v1 enrolment"` | [10.3](10-devices.md#103-adding-a-device-with-a-qr-code) |
 | `"BlackBoxus v1 passkey-prf-input"` | [10.5](10-devices.md#105-passkey-unlock-webauthn-prf) |
+| `"BlackBoxus v1 local-storage"` | [6.8](06-items.md#68-local-copy) |
 | `"BlackBoxus v1 passkey-unlock"` | [10.5](10-devices.md#105-passkey-unlock-webauthn-prf) |
 | `"BlackBoxus v1 recovery-key checksum"` | [11.2](11-recovery.md#112-recovery-key) |
 | `"BlackBoxus v1 recovery-wrap"` | [11.2](11-recovery.md#112-recovery-key) |

@@ -82,17 +82,20 @@ Limits per email address apply equally to addresses without an account, so they 
 | Method and path | Request → response | Server checks |
 |---|---|---|
 | `POST /v1/logout` | → `{}` | Deletes this session. |
-| `GET /v1/keyset` | → `{key_set_version, wrapped: [{method, credential_id?, data}]}` | Only this account's wrapped copies. Device-key copies are never stored (10.4). |
+| `GET /v1/keyset` | → `{account_id, key_set_version, wrapped: [{method, credential_id?, data}]}` | Only this account's wrapped copies. Device-key copies are never stored (10.4). |
 | `PUT /v1/keyset/wrapped` | `{method, credential_id?, data}` → `{}` | Method is 2 (passkey, with a credential ID of at most 1023 bytes), 4 or 5; header matches the current key set version and the method. |
 | `DELETE /v1/keyset/wrapped` | `{method, credential_id?}` → `{}` | Deletes that copy. Method 1 cannot be deleted. |
 | `POST /v1/password` | `{upload, salt, kdf, wrapped_key_set}` → `{}` | Session less than 5 minutes old. As for `register/finish`; ends all other sessions. |
 | `GET /v1/accounts/{account_id}/keys?seen={tree_size}` | → `{signed_bundle, leaf, leaf_index, inclusion_proof, signed_tree_head, consistency_proof}` | `seen` is not larger than the log. Proofs are against the latest signed tree head, which the server signs on the first lookup after the log grows (9.4). |
 | `GET /v1/accounts/self/leaves` | → `{leaves: [{leaf, leaf_index, inclusion_proof}], signed_tree_head}` | All leaves for this account, for self-monitoring (9.5). |
 | `PUT /v1/enrolment/{session_id}` | `{sealed}` → `{}` | 96 to 8192 bytes; no transfer already stored under this ID (10.3). |
-| `POST /v1/vaults/{vault_id}/log` | `{entry, items: [{item_id, revision, envelope}]}` → `{seq}` | Entry is at most 4096 bytes, parses, is for this vault and extends the current head (8.6); envelopes are within the size limits (6.4). Entry and envelopes are stored atomically. |
-| `GET /v1/vaults/{vault_id}/log?after={seq}` | → `{entries: [...]}` | Account may read this vault (12.8). At most 1000 entries per response. |
-| `GET /v1/vaults/{vault_id}/items?ids=...` | → `{items: [{item_id, revision, envelope}]}` | Account may read this vault. |
-| `POST /v1/shares` | `{share}` → `{}` | Share is 4627 bytes and its sender is this account (7.4). Records the recipient as allowed to read the vault. |
+| `GET /v1/vaults` | → `{vaults: [{vault_id, head_seq}]}` | Vaults this account may read (12.8). |
+| `POST /v1/vaults/{vault_id}/log` | `{entry, envelope?}` → `{seq}` | Entry is at most 4096 bytes, parses, is for this vault, is authored by this account and extends the current head (8.6). The first entry must create the vault, which makes its author able to read it. A `PutItem` entry carries its envelope, which must be within the size limits (6.4), name this vault, item and revision, and match the entry's envelope hash; other entries carry none. Entry and item change are stored atomically. |
+| `GET /v1/vaults/{vault_id}/log?from={seq}` | → `{entries: [...], more}` | Account may read this vault. At most 200 entries per response. |
+| `GET /v1/vaults/{vault_id}/items?after={seq}` | → `{items: [{item_id, revision, envelope?, seq}], more}` | Account may read this vault. The current envelope of each item changed by an entry after `seq` (all items without `after`), ordered by `seq`; deleted items have no envelope. At most 200 per response. |
+| `PUT /v1/vaults/{vault_id}/keys` | `{wrapped}` → `{}` | Account may read this vault; the key is 94 bytes and wrapped for this vault (7.3). Stored per account and key version. |
+| `GET /v1/vaults/{vault_id}/keys` | → `{keys: [...]}` | This account's wrapped copies of the vault key. |
+| `POST /v1/shares` | `{share}` → `{}` | Share is 4627 bytes, its sender is this account, the sender may read the vault, and the recipient is someone else (7.4). Records the recipient as allowed to read the vault. |
 | `GET /v1/shares` | → `{shares: [...]}` | Shares addressed to this account. |
 | `PUT /v1/recovery` | `{verifier, wrapped_key_set}` → `{}` | Wrapped key set uses method 4. Replaces any earlier recovery key (11.2). |
 | `PUT /v1/emergency` | `{grant}` → `{}` | Grant is 4609 bytes and its owner is this account (11.4). |
@@ -127,5 +130,5 @@ The server runs on Cloudflare Workers (Free plan) with one D1 database, and is s
 - **Key log size.** The log's subtree hashes are kept in one D1 row of about 85 bytes per account, which D1's 2 MB row limit caps at roughly 23,000 accounts. Before then, the tree must move to one row per level.
 - **Clean-up.** A daily scheduled job deletes expired logins, enrolment transfers, sessions and rate limit windows.
 
-This version serves the endpoints for accounts, login, sessions, key lookups and device enrolment. The vault, sharing, recovery, emergency access, password change and self-monitoring endpoints answer `not_implemented` until the clients that use them exist.
+This version serves the endpoints for accounts, login, sessions, key lookups, device enrolment, vaults and sharing. The recovery, emergency access, password change, extra unlock methods and self-monitoring endpoints answer `not_implemented` until the clients that use them exist.
 

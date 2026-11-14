@@ -14,12 +14,18 @@ use server_core::api::{
     PendingLogin, SESSION_IDLE_MS, SESSION_MAX_MS, Session, accept_enrolment, session_token_hash,
     take_enrolment,
 };
+use server_core::log::MAX_ENTRY_BYTES;
 use server_core::login::OpaqueServer;
 use server_core::prelogin::FakeSaltKey;
 use server_core::transparency::KtLog;
+use server_core::vaults::{
+    ItemWrite, MAX_ITEMS_PAGE, MAX_LOG_PAGE, accept_append, accept_owner_key, accept_share,
+};
+use vault_core::log::Checkpoint;
 use vault_core::{
-    AccountId, AccountSalt, ClientIdentity, IdentitySecretKey, KdfParams, SIGNED_PUBLIC_BUNDLE_LEN,
-    ServerIdentity, WRAPPED_KEY_SET_LEN,
+    AccountId, AccountSalt, ClientIdentity, IdentitySecretKey, KdfParams, MAX_ENVELOPE_LEN,
+    OWNER_WRAPPED_VAULT_KEY_LEN, SIGNED_PUBLIC_BUNDLE_LEN, ServerIdentity, ShareInfo,
+    VAULT_SHARE_LEN, VaultId, WRAPPED_KEY_SET_LEN,
 };
 use worker::wasm_bindgen::JsValue;
 use worker::{
@@ -29,10 +35,14 @@ use worker::{
 use zeroize::Zeroizing;
 
 use crate::http::{
-    self, ApiError, EnrolmentGetResponse, EnrolmentPutRequest, KeyLookupJson, KeySetResponse,
-    Limit, LoginFinishRequest, LoginStartRequest, LoginStartResponse, PreloginRequest,
-    PreloginResponse, RegisterFinishRequest, RegisterFinishResponse, RegisterStartRequest,
-    RegisterStartResponse, Route, WrappedJson, b64, unb64, unb64_array,
+    self, ApiError, EnrolmentGetResponse, EnrolmentPutRequest, KeySetResponse, Limit,
+    LoginFinishRequest, LoginStartRequest, LoginStartResponse, PreloginRequest, PreloginResponse,
+    RegisterFinishRequest, RegisterFinishResponse, RegisterStartRequest, RegisterStartResponse,
+    Route, WrappedJson, b64, unb64, unb64_array,
+};
+use wire::{
+    ItemJson, ItemsResponse, LogAppendRequest, LogAppendResponse, LogResponse, SharePostRequest,
+    SharesResponse, VaultKeyPutRequest, VaultKeysResponse, VaultListResponse, VaultSummary,
 };
 
 /// Largest OPAQUE message or state accepted from a client or storage.
@@ -168,6 +178,14 @@ async fn handle(req: &mut Request, env: &Env, now: u64) -> Answer {
         Route::AccountKeys(id) => account_keys(req, &db, api, &id, now).await,
         Route::EnrolmentPut(id) => enrolment_put(req, &db, api, &id, now).await,
         Route::EnrolmentGet(id) => enrolment_get(&db, &id, &ip, now).await,
+        Route::Vaults => vaults(req, &db, api, now).await,
+        Route::LogAppend(v) => log_append(req, &db, api, &v, now).await,
+        Route::LogRead(v) => log_read(req, &db, api, &v, now).await,
+        Route::Items(v) => items(req, &db, api, &v, now).await,
+        Route::VaultKeyPut(v) => vault_key_put(req, &db, api, &v, now).await,
+        Route::VaultKeys(v) => vault_keys(req, &db, api, &v, now).await,
+        Route::SharePost => share_post(req, &db, api, now).await,
+        Route::Shares => shares(req, &db, api, now).await,
         Route::NotImplemented => Err(ApiError::NotImplemented),
     }
 }
@@ -385,6 +403,7 @@ async fn key_set(req: &Request, db: &D1Database, api: &Api, now: u64) -> Answer 
     .await?
     .ok_or(ApiError::Storage)?;
     json(&KeySetResponse {
+        account_id: b64(session.account_id.as_bytes()),
         key_set_version: row.key_set_version,
         wrapped: vec![WrappedJson {
             method: 1,
@@ -440,7 +459,7 @@ async fn account_keys(
     let leaf_bytes = unb64(&leaf.leaf, vault_core::transparency::LEAF_LEN)?;
     let response =
         Api::key_lookup_with_head(&log, &account, &leaf_bytes, leaf.leaf_index, seen, head)?;
-    json(&KeyLookupJson::from(response))
+    json(&http::lookup_json(response))
 }
 
 async fn enrolment_put(
@@ -494,6 +513,347 @@ async fn enrolment_get(db: &D1Database, id: &[u8; 16], ip: &str, now: u64) -> An
     json(&EnrolmentGetResponse {
         sealed: b64(&sealed),
     })
+}
+
+// ---------------------------------------------------------------------------
+// Vaults
+
+async fn may_read(db: &D1Database, vault: &str, account: &str) -> Result<bool, ApiError> {
+    #[derive(Deserialize)]
+    struct One {
+        #[allow(dead_code, reason = "presence is what matters")]
+        one: u32,
+    }
+    let row: Option<One> = first(
+        db,
+        "SELECT 1 AS one FROM vault_access WHERE vault_id = ?1 AND account_id = ?2",
+        &[text(vault), text(account)],
+    )
+    .await?;
+    Ok(row.is_some())
+}
+
+async fn require_read(db: &D1Database, vault: &str, account: &str) -> Result<(), ApiError> {
+    if may_read(db, vault, account).await? {
+        Ok(())
+    } else {
+        Err(ApiError::Core(CoreError::NotAllowed))
+    }
+}
+
+#[derive(Deserialize)]
+struct VaultRow {
+    vault_id: String,
+    head_seq: u64,
+}
+
+async fn vaults(req: &Request, db: &D1Database, api: &Api, now: u64) -> Answer {
+    let session = authenticate(req, db, api, now).await?;
+    let rows: Vec<VaultRow> = all(
+        db,
+        "SELECT a.vault_id AS vault_id, MAX(l.seq) AS head_seq FROM vault_access a \
+         JOIN vault_log l ON l.vault_id = a.vault_id WHERE a.account_id = ?1 GROUP BY a.vault_id",
+        &[text(&b64(session.account_id.as_bytes()))],
+    )
+    .await?;
+    json(&VaultListResponse {
+        vaults: rows
+            .into_iter()
+            .map(|r| VaultSummary {
+                vault_id: r.vault_id,
+                head_seq: r.head_seq,
+            })
+            .collect(),
+    })
+}
+
+#[derive(Deserialize)]
+struct HeadRow {
+    seq: u64,
+    hash: String,
+}
+
+async fn log_append(
+    req: &mut Request,
+    db: &D1Database,
+    api: &Api,
+    vault_id: &VaultId,
+    now: u64,
+) -> Answer {
+    let session = authenticate(req, db, api, now).await?;
+    let r: LogAppendRequest = body(req).await?;
+    let entry = unb64(&r.entry, MAX_ENTRY_BYTES)?;
+    let envelope = r
+        .envelope
+        .as_deref()
+        .map(|e| unb64(e, MAX_ENVELOPE_LEN))
+        .transpose()?;
+    let vault = b64(vault_id.as_bytes());
+    let account = b64(session.account_id.as_bytes());
+    let head: Option<HeadRow> = first(
+        db,
+        "SELECT seq, hash FROM vault_log WHERE vault_id = ?1 ORDER BY seq DESC LIMIT 1",
+        &[text(&vault)],
+    )
+    .await?;
+    let head = head
+        .map(|h| {
+            Ok::<_, ApiError>(Checkpoint {
+                seq: h.seq,
+                hash: unb64_array(&h.hash)?,
+            })
+        })
+        .transpose()?;
+    let readable = head.is_some() && may_read(db, &vault, &account).await?;
+    let accepted = accept_append(
+        vault_id,
+        head.as_ref(),
+        readable,
+        &session.account_id,
+        &entry,
+        envelope.as_deref(),
+    )?;
+    let seq = accepted.checkpoint.seq;
+    let mut statements = vec![stmt(
+        db,
+        "INSERT INTO vault_log (vault_id, seq, entry, hash) VALUES (?1, ?2, ?3, ?4)",
+        &[
+            text(&vault),
+            num(seq),
+            text(&b64(&entry)),
+            text(&b64(&accepted.checkpoint.hash)),
+        ],
+    )?];
+    if accepted.creates_vault {
+        statements.push(stmt(
+            db,
+            "INSERT INTO vault_access (vault_id, account_id) VALUES (?1, ?2)",
+            &[text(&vault), text(&account)],
+        )?);
+    }
+    let upsert = "INSERT INTO vault_items (vault_id, item_id, revision, envelope, seq) \
+                  VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (vault_id, item_id) DO UPDATE SET \
+                  revision = excluded.revision, envelope = excluded.envelope, seq = excluded.seq";
+    match &accepted.item {
+        Some(ItemWrite::Put {
+            item_id,
+            revision,
+            envelope,
+        }) => statements.push(stmt(
+            db,
+            upsert,
+            &[
+                text(&vault),
+                text(&b64(item_id.as_bytes())),
+                num(*revision),
+                text(&b64(envelope)),
+                num(seq),
+            ],
+        )?),
+        Some(ItemWrite::Delete { item_id, revision }) => statements.push(stmt(
+            db,
+            upsert,
+            &[
+                text(&vault),
+                text(&b64(item_id.as_bytes())),
+                num(*revision),
+                JsValue::NULL,
+                num(seq),
+            ],
+        )?),
+        None => {}
+    }
+    db.batch(statements).await.map_err(storage)?;
+    json(&LogAppendResponse { seq })
+}
+
+#[derive(Deserialize)]
+struct EntryRow {
+    entry: String,
+}
+
+async fn log_read(
+    req: &mut Request,
+    db: &D1Database,
+    api: &Api,
+    vault_id: &VaultId,
+    now: u64,
+) -> Answer {
+    let session = authenticate(req, db, api, now).await?;
+    let from = http::parse_number(req.url().map_err(|_| MALFORMED)?.query(), "from")?.unwrap_or(0);
+    let vault = b64(vault_id.as_bytes());
+    require_read(db, &vault, &b64(session.account_id.as_bytes())).await?;
+    let mut rows: Vec<EntryRow> = all(
+        db,
+        "SELECT entry FROM vault_log WHERE vault_id = ?1 AND seq >= ?2 ORDER BY seq LIMIT ?3",
+        &[text(&vault), num(from), num(page_plus_one(MAX_LOG_PAGE))],
+    )
+    .await?;
+    let more = rows.len() > MAX_LOG_PAGE;
+    rows.truncate(MAX_LOG_PAGE);
+    json(&LogResponse {
+        entries: rows.into_iter().map(|r| r.entry).collect(),
+        more,
+    })
+}
+
+#[derive(Deserialize)]
+struct ItemRow {
+    item_id: String,
+    revision: u64,
+    envelope: Option<String>,
+    seq: u64,
+}
+
+async fn items(
+    req: &mut Request,
+    db: &D1Database,
+    api: &Api,
+    vault_id: &VaultId,
+    now: u64,
+) -> Answer {
+    let session = authenticate(req, db, api, now).await?;
+    let after = http::parse_number(req.url().map_err(|_| MALFORMED)?.query(), "after")?;
+    let vault = b64(vault_id.as_bytes());
+    require_read(db, &vault, &b64(session.account_id.as_bytes())).await?;
+    // Without `after`, everything; `-1` is below every sequence number.
+    let after = after.map_or(JsValue::from_f64(-1.0), num);
+    let mut rows: Vec<ItemRow> = all(
+        db,
+        "SELECT item_id, revision, envelope, seq FROM vault_items \
+         WHERE vault_id = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3",
+        &[text(&vault), after, num(page_plus_one(MAX_ITEMS_PAGE))],
+    )
+    .await?;
+    let more = rows.len() > MAX_ITEMS_PAGE;
+    rows.truncate(MAX_ITEMS_PAGE);
+    json(&ItemsResponse {
+        items: rows
+            .into_iter()
+            .map(|r| ItemJson {
+                item_id: r.item_id,
+                revision: r.revision,
+                envelope: r.envelope,
+                seq: r.seq,
+            })
+            .collect(),
+        more,
+    })
+}
+
+async fn vault_key_put(
+    req: &mut Request,
+    db: &D1Database,
+    api: &Api,
+    vault_id: &VaultId,
+    now: u64,
+) -> Answer {
+    let session = authenticate(req, db, api, now).await?;
+    let r: VaultKeyPutRequest = body(req).await?;
+    let wrapped = unb64(&r.wrapped, OWNER_WRAPPED_VAULT_KEY_LEN)?;
+    let vault = b64(vault_id.as_bytes());
+    let account = b64(session.account_id.as_bytes());
+    let version = accept_owner_key(vault_id, may_read(db, &vault, &account).await?, &wrapped)?;
+    exec(
+        db,
+        "INSERT INTO vault_keys (vault_id, account_id, version, wrapped) VALUES (?1, ?2, ?3, ?4) \
+         ON CONFLICT (vault_id, account_id, version) DO UPDATE SET wrapped = excluded.wrapped",
+        &[
+            text(&vault),
+            text(&account),
+            num(u64::from(version)),
+            text(&b64(&wrapped)),
+        ],
+    )
+    .await?;
+    Ok("{}".into())
+}
+
+#[derive(Deserialize)]
+struct WrappedRow {
+    wrapped: String,
+}
+
+async fn vault_keys(
+    req: &Request,
+    db: &D1Database,
+    api: &Api,
+    vault_id: &VaultId,
+    now: u64,
+) -> Answer {
+    let session = authenticate(req, db, api, now).await?;
+    let rows: Vec<WrappedRow> = all(
+        db,
+        "SELECT wrapped FROM vault_keys WHERE vault_id = ?1 AND account_id = ?2 ORDER BY version",
+        &[
+            text(&b64(vault_id.as_bytes())),
+            text(&b64(session.account_id.as_bytes())),
+        ],
+    )
+    .await?;
+    json(&VaultKeysResponse {
+        keys: rows.into_iter().map(|r| r.wrapped).collect(),
+    })
+}
+
+async fn share_post(req: &mut Request, db: &D1Database, api: &Api, now: u64) -> Answer {
+    let session = authenticate(req, db, api, now).await?;
+    let r: SharePostRequest = body(req).await?;
+    let share = unb64(&r.share, VAULT_SHARE_LEN)?;
+    let account = b64(session.account_id.as_bytes());
+    let vault_of = ShareInfo::inspect(&share).map_err(|_| MALFORMED)?.vault_id;
+    let vault = b64(vault_of.as_bytes());
+    let info = accept_share(
+        &share,
+        &session.account_id,
+        may_read(db, &vault, &account).await?,
+    )?;
+    let recipient = b64(info.recipient.as_bytes());
+    let statements = vec![
+        stmt(
+            db,
+            "INSERT INTO shares (recipient, vault_id, version, sender, share, created_ms) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (recipient, vault_id, version, sender) \
+             DO UPDATE SET share = excluded.share, created_ms = excluded.created_ms",
+            &[
+                text(&recipient),
+                text(&vault),
+                num(u64::from(info.vault_key_version)),
+                text(&account),
+                text(&b64(&share)),
+                num(now),
+            ],
+        )?,
+        stmt(
+            db,
+            "INSERT OR IGNORE INTO vault_access (vault_id, account_id) VALUES (?1, ?2)",
+            &[text(&vault), text(&recipient)],
+        )?,
+    ];
+    db.batch(statements).await.map_err(storage)?;
+    Ok("{}".into())
+}
+
+#[derive(Deserialize)]
+struct ShareRow {
+    share: String,
+}
+
+async fn shares(req: &Request, db: &D1Database, api: &Api, now: u64) -> Answer {
+    let session = authenticate(req, db, api, now).await?;
+    let rows: Vec<ShareRow> = all(
+        db,
+        "SELECT share FROM shares WHERE recipient = ?1 ORDER BY created_ms LIMIT 500",
+        &[text(&b64(session.account_id.as_bytes()))],
+    )
+    .await?;
+    json(&SharesResponse {
+        shares: rows.into_iter().map(|r| r.share).collect(),
+    })
+}
+
+fn page_plus_one(page: usize) -> u64 {
+    u64::try_from(page).unwrap_or(u64::MAX).saturating_add(1)
 }
 
 // ---------------------------------------------------------------------------
@@ -745,6 +1105,19 @@ async fn exec(db: &D1Database, sql: &str, args: &[JsValue]) -> Result<(), ApiErr
         .await
         .map(|_| ())
         .map_err(storage)
+}
+
+async fn all<T: DeserializeOwned>(
+    db: &D1Database,
+    sql: &str,
+    args: &[JsValue],
+) -> Result<Vec<T>, ApiError> {
+    stmt(db, sql, args)?
+        .all()
+        .await
+        .map_err(storage)?
+        .results()
+        .map_err(|_| ApiError::Storage)
 }
 
 async fn first<T: DeserializeOwned>(

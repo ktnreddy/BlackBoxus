@@ -10,6 +10,7 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
+client-core = { path = "../crates/client-core" }
 arbitrary = { version = "1.5", features = ["derive"] }
 libfuzzer-sys = "0.4.13"
 server-core = { path = "../crates/server-core" }
@@ -102,6 +103,20 @@ bench = false
 [[bin]]
 name = "tampering"
 path = "fuzz_targets/tampering.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "client_responses"
+path = "fuzz_targets/client_responses.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vault_append"
+path = "fuzz_targets/vault_append.rs"
 test = false
 doc = false
 bench = false

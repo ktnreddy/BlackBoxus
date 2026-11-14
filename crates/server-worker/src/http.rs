@@ -2,11 +2,10 @@
 //! Cloudflare: routing, JSON bodies, base64url and hex encoding, errors,
 //! headers and rate limit keys. Everything here is tested natively.
 
-use base64ct::{Base64UrlUnpadded, Encoding};
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use vault_core::{AccountId, KdfParams};
+use vault_core::{AccountId, VaultId};
+pub use wire::*;
 
 /// Largest request body, in bytes (spec section 12.2).
 pub const MAX_BODY_BYTES: usize = server_core::api::MAX_REQUEST_BYTES;
@@ -47,6 +46,22 @@ pub enum Route {
     EnrolmentPut([u8; 16]),
     /// `GET /v1/enrolment/{session_id}`
     EnrolmentGet([u8; 16]),
+    /// `GET /v1/vaults`
+    Vaults,
+    /// `POST /v1/vaults/{vault_id}/log`
+    LogAppend(VaultId),
+    /// `GET /v1/vaults/{vault_id}/log`
+    LogRead(VaultId),
+    /// `GET /v1/vaults/{vault_id}/items`
+    Items(VaultId),
+    /// `PUT /v1/vaults/{vault_id}/keys`
+    VaultKeyPut(VaultId),
+    /// `GET /v1/vaults/{vault_id}/keys`
+    VaultKeys(VaultId),
+    /// `POST /v1/shares`
+    SharePost,
+    /// `GET /v1/shares`
+    Shares,
     /// An endpoint of spec section 12 that this version does not serve yet.
     NotImplemented,
 }
@@ -60,8 +75,6 @@ const PLANNED: &[(&str, &str)] = &[
     ("POST", "/v1/recovery/finish"),
     ("PUT", "/v1/recovery"),
     ("GET", "/v1/accounts/self/leaves"),
-    ("POST", "/v1/shares"),
-    ("GET", "/v1/shares"),
     ("PUT", "/v1/emergency"),
 ];
 
@@ -80,6 +93,9 @@ pub fn route(method: &str, path: &str) -> Result<Route, ApiError> {
         ("POST", "/v1/login/finish") => Some(Route::LoginFinish),
         ("POST", "/v1/logout") => Some(Route::Logout),
         ("GET", "/v1/keyset") => Some(Route::KeySet),
+        ("GET", "/v1/vaults") => Some(Route::Vaults),
+        ("POST", "/v1/shares") => Some(Route::SharePost),
+        ("GET", "/v1/shares") => Some(Route::Shares),
         _ => None,
     };
     if let Some(r) = fixed {
@@ -95,11 +111,14 @@ pub fn route(method: &str, path: &str) -> Result<Route, ApiError> {
         }
         ("PUT", ["", "v1", "enrolment", id]) => Ok(Route::EnrolmentPut(path_id(id)?)),
         ("GET", ["", "v1", "enrolment", id]) => Ok(Route::EnrolmentGet(path_id(id)?)),
+        ("POST", ["", "v1", "vaults", id, "log"]) => Ok(Route::LogAppend(vault(id)?)),
+        ("GET", ["", "v1", "vaults", id, "log"]) => Ok(Route::LogRead(vault(id)?)),
+        ("GET", ["", "v1", "vaults", id, "items"]) => Ok(Route::Items(vault(id)?)),
+        ("PUT", ["", "v1", "vaults", id, "keys"]) => Ok(Route::VaultKeyPut(vault(id)?)),
+        ("GET", ["", "v1", "vaults", id, "keys"]) => Ok(Route::VaultKeys(vault(id)?)),
         (
             "POST" | "GET",
-            ["", "v1", "vaults", _, "log" | "items"]
-            | ["", "v1", "emergency", _]
-            | ["", "v1", "emergency", _, "request" | "deny"],
+            ["", "v1", "emergency", _] | ["", "v1", "emergency", _, "request" | "deny"],
         ) => Ok(Route::NotImplemented),
         _ => Err(ApiError::NotFound),
     }
@@ -182,12 +201,6 @@ pub fn parse_json<T: DeserializeOwned>(body: &[u8]) -> Result<T, ApiError> {
     serde_json::from_slice(body).map_err(|_| MALFORMED)
 }
 
-/// Encodes bytes as base64url without padding.
-#[must_use]
-pub fn b64(bytes: &[u8]) -> String {
-    Base64UrlUnpadded::encode_string(bytes)
-}
-
 /// Decodes canonical base64url without padding, rejecting anything longer
 /// than `max_len` bytes.
 ///
@@ -196,15 +209,7 @@ pub fn b64(bytes: &[u8]) -> String {
 /// Returns a `malformed` error for padding, other alphabets, non-zero
 /// trailing bits or excess length.
 pub fn unb64(text: &str, max_len: usize) -> Result<Vec<u8>, ApiError> {
-    // Four characters carry three bytes; reject before decoding anything big.
-    if text.len() > max_len.saturating_mul(4).div_ceil(3) {
-        return Err(MALFORMED);
-    }
-    let bytes = Base64UrlUnpadded::decode_vec(text).map_err(|_| MALFORMED)?;
-    if bytes.len() > max_len {
-        return Err(MALFORMED);
-    }
-    Ok(bytes)
+    wire::unb64(text, max_len).ok_or(MALFORMED)
 }
 
 /// Decodes canonical base64url of exactly `N` bytes.
@@ -213,7 +218,20 @@ pub fn unb64(text: &str, max_len: usize) -> Result<Vec<u8>, ApiError> {
 ///
 /// Returns a `malformed` error.
 pub fn unb64_array<const N: usize>(text: &str) -> Result<[u8; N], ApiError> {
-    unb64(text, N)?.try_into().map_err(|_| MALFORMED)
+    wire::unb64_array(text).ok_or(MALFORMED)
+}
+
+/// Converts a key lookup answer to its JSON form.
+#[must_use]
+pub fn lookup_json(r: server_core::api::KeyLookupResponse) -> KeyLookupJson {
+    KeyLookupJson {
+        signed_bundle: b64(&r.signed_bundle),
+        leaf: b64(&r.leaf),
+        leaf_index: r.leaf_index,
+        inclusion_proof: r.inclusion_proof.iter().map(|h| b64(h)).collect(),
+        signed_tree_head: b64(&r.signed_tree_head),
+        consistency_proof: r.consistency_proof.iter().map(|h| b64(h)).collect(),
+    }
 }
 
 /// Lower-case hex.
@@ -238,6 +256,10 @@ pub fn path_id(text: &str) -> Result<[u8; 16], ApiError> {
     unb64_array(text).map_err(|_| ApiError::NotFound)
 }
 
+fn vault(text: &str) -> Result<VaultId, ApiError> {
+    path_id(text).map(VaultId::from_bytes)
+}
+
 /// Extracts the session token from an `Authorization: Bearer` header.
 ///
 /// # Errors
@@ -256,10 +278,22 @@ pub fn bearer_token(header: Option<&str>) -> Result<Vec<u8>, ApiError> {
 ///
 /// Returns a `malformed` error for anything but a single decimal number.
 pub fn parse_seen(query: Option<&str>) -> Result<Option<u64>, ApiError> {
+    parse_number(query, "seen")
+}
+
+/// Parses an optional query of the form `{name}={decimal}`, and nothing else.
+///
+/// # Errors
+///
+/// Returns a `malformed` error for anything but a single decimal number.
+pub fn parse_number(query: Option<&str>, name: &str) -> Result<Option<u64>, ApiError> {
     let Some(q) = query.filter(|q| !q.is_empty()) else {
         return Ok(None);
     };
-    let value = q.strip_prefix("seen=").ok_or(MALFORMED)?;
+    let value = q
+        .strip_prefix(name)
+        .and_then(|v| v.strip_prefix('='))
+        .ok_or(MALFORMED)?;
     if value.is_empty() || value.len() > 19 || !value.bytes().all(|b| b.is_ascii_digit()) {
         return Err(MALFORMED);
     }
@@ -337,189 +371,6 @@ impl Limit {
     }
 }
 
-/// Argon2id parameters as sent in JSON.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct KdfJson {
-    /// Memory in KiB.
-    pub m: u32,
-    /// Passes.
-    pub t: u32,
-    /// Lanes.
-    pub p: u32,
-}
-
-impl From<KdfParams> for KdfJson {
-    fn from(k: KdfParams) -> Self {
-        Self {
-            m: k.memory_kib,
-            t: k.iterations,
-            p: k.parallelism,
-        }
-    }
-}
-
-impl From<KdfJson> for KdfParams {
-    fn from(k: KdfJson) -> Self {
-        Self {
-            memory_kib: k.m,
-            iterations: k.t,
-            parallelism: k.p,
-        }
-    }
-}
-
-/// `POST /v1/prelogin`
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PreloginRequest {
-    /// Email address.
-    pub email: String,
-}
-
-/// Answer to `POST /v1/prelogin`.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PreloginResponse {
-    /// Argon2id salt.
-    pub salt: String,
-    /// Argon2id parameters.
-    pub kdf: KdfJson,
-}
-
-/// `POST /v1/register/start`
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RegisterStartRequest {
-    /// Email address.
-    pub email: String,
-    /// OPAQUE registration request.
-    pub request: String,
-}
-
-/// Answer to `POST /v1/register/start`.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct RegisterStartResponse {
-    /// OPAQUE registration response.
-    pub response: String,
-}
-
-/// `POST /v1/register/finish`
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RegisterFinishRequest {
-    /// Email address.
-    pub email: String,
-    /// Argon2id salt.
-    pub salt: String,
-    /// Argon2id parameters.
-    pub kdf: KdfJson,
-    /// OPAQUE registration upload.
-    pub upload: String,
-    /// Signed public key bundle.
-    pub signed_bundle: String,
-    /// Key set wrapped with method 1.
-    pub wrapped_key_set: String,
-}
-
-/// Answer to `POST /v1/register/finish`.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct RegisterFinishResponse {
-    /// The new account's ID, lower-case hex.
-    pub account_id: String,
-}
-
-/// `POST /v1/login/start`
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LoginStartRequest {
-    /// Email address.
-    pub email: String,
-    /// OPAQUE `KE1`.
-    pub ke1: String,
-}
-
-/// Answer to `POST /v1/login/start`.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct LoginStartResponse {
-    /// ID to send back with `KE3`.
-    pub login_id: String,
-    /// OPAQUE `KE2`.
-    pub ke2: String,
-}
-
-/// `POST /v1/login/finish`
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LoginFinishRequest {
-    /// From `login/start`.
-    pub login_id: String,
-    /// OPAQUE `KE3`.
-    pub ke3: String,
-}
-
-/// One wrapped copy of the key set.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct WrappedJson {
-    /// Unlock method (spec section 5.4).
-    pub method: u8,
-    /// The wrapped key set.
-    pub data: String,
-}
-
-/// Answer to `GET /v1/keyset`.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct KeySetResponse {
-    /// Current key set version.
-    pub key_set_version: u32,
-    /// Wrapped copies stored on the server.
-    pub wrapped: Vec<WrappedJson>,
-}
-
-/// Answer to `GET /v1/accounts/{id}/keys`.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct KeyLookupJson {
-    /// Signed public key bundle.
-    pub signed_bundle: String,
-    /// Its log leaf.
-    pub leaf: String,
-    /// The leaf's index.
-    pub leaf_index: u64,
-    /// Inclusion proof.
-    pub inclusion_proof: Vec<String>,
-    /// Signed tree head.
-    pub signed_tree_head: String,
-    /// Consistency proof from `seen`.
-    pub consistency_proof: Vec<String>,
-}
-
-impl From<server_core::api::KeyLookupResponse> for KeyLookupJson {
-    fn from(r: server_core::api::KeyLookupResponse) -> Self {
-        Self {
-            signed_bundle: b64(&r.signed_bundle),
-            leaf: b64(&r.leaf),
-            leaf_index: r.leaf_index,
-            inclusion_proof: r.inclusion_proof.iter().map(|h| b64(h)).collect(),
-            signed_tree_head: b64(&r.signed_tree_head),
-            consistency_proof: r.consistency_proof.iter().map(|h| b64(h)).collect(),
-        }
-    }
-}
-
-/// `PUT /v1/enrolment/{session_id}`
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EnrolmentPutRequest {
-    /// The encrypted transfer.
-    pub sealed: String,
-}
-
-/// Answer to `GET /v1/enrolment/{session_id}`.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct EnrolmentGetResponse {
-    /// The encrypted transfer.
-    pub sealed: String,
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "test code")]
@@ -545,9 +396,18 @@ mod tests {
             route("GET", &format!("/v1/enrolment/{id}")),
             Ok(Route::EnrolmentGet(bytes))
         );
-        assert_eq!(route("POST", "/v1/shares"), Ok(Route::NotImplemented));
+        assert_eq!(route("POST", "/v1/shares"), Ok(Route::SharePost));
+        assert_eq!(route("GET", "/v1/vaults"), Ok(Route::Vaults));
         assert_eq!(
             route("POST", &format!("/v1/vaults/{id}/log")),
+            Ok(Route::LogAppend(VaultId::from_bytes(bytes)))
+        );
+        assert_eq!(
+            route("GET", &format!("/v1/vaults/{id}/items")),
+            Ok(Route::Items(VaultId::from_bytes(bytes)))
+        );
+        assert_eq!(
+            route("PUT", "/v1/keyset/wrapped"),
             Ok(Route::NotImplemented)
         );
         for (m, p) in [

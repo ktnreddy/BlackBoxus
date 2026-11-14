@@ -47,9 +47,14 @@ All cryptography lives in one Rust library, `vault-core`, shared by every app. T
 ```
 crates/
   vault-core/    All cryptography and the vault data model
+  client-core/   Client flows shared by every app (sign-up, login, key lookups)
+  wire/          JSON messages of the server API, shared by server and clients
   server-core/   Platform-independent server logic
+  server-worker/ The server on Cloudflare Workers and D1
+fuzz/            Fuzz targets for every parser of untrusted data
 docs/
   architecture.md
+  deployment.md
   spec/          Protocol specification
 ```
 

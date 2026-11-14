@@ -121,3 +121,16 @@ Because the header values are bound into both associated-data strings, editing a
 ## 6.7 Test vectors
 
 [`vectors/06-items.json`](vectors/06-items.json) gives encoded content, padded content and a complete envelope made with fixed keys and nonces. They are checked independently with libsodium by [`tools/vectors/verify_items.py`](../../tools/vectors/verify_items.py).
+
+## 6.8 Local copy
+
+Clients keep an encrypted copy of each vault on the device, so it can be read offline and while the server is unavailable. The copy holds what the server sent: signed log entries, the authors' signed key bundles and item envelopes. It never holds decrypted items or vault keys.
+
+```
+key    = HKDF-SHA-256(salt = account_id, IKM = account_key,
+                      info = "BlackBoxus v1 local-storage", L = 32)
+aad    = "BlackBoxus v1 local-storage" ‖ account_id ‖ "vault " ‖ vault_id
+sealed = nonce ‖ XChaCha20-Poly1305(key, nonce, copy, aad)
+```
+
+`account_key` is the key set's account key (Section 5.1), so the copy can only be read while the account is unlocked. Binding the vault ID stops one vault's copy being swapped for another's. When a copy is loaded, its log is verified again (Section 8.4) before anything in it is used.

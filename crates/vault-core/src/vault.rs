@@ -273,6 +273,50 @@ impl VaultKey {
     }
 }
 
+/// The public header of a vault share, readable without any key. The
+/// server uses it to route shares; clients must still verify and open the
+/// share with [`VaultKey::open_share`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShareInfo {
+    /// The shared vault.
+    pub vault_id: VaultId,
+    /// The vault key version.
+    pub vault_key_version: u32,
+    /// The sender.
+    pub sender: AccountId,
+    /// The sender's key set version.
+    pub sender_key_set_version: u32,
+    /// The recipient.
+    pub recipient: AccountId,
+    /// The recipient's key set version.
+    pub recipient_key_set_version: u32,
+}
+
+impl ShareInfo {
+    /// Reads a share's header without verifying anything.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::MalformedMessage`] for a bad length or header.
+    pub fn inspect(share: &[u8]) -> Result<Self> {
+        if share.len() != VAULT_SHARE_LEN {
+            return Err(Error::MalformedMessage);
+        }
+        let header = share
+            .get(..SHARE_HEADER_LEN)
+            .ok_or(Error::MalformedMessage)?;
+        let h = ShareHeader::decode(header)?;
+        Ok(Self {
+            vault_id: h.vault_id,
+            vault_key_version: h.vault_key_version,
+            sender: h.sender,
+            sender_key_set_version: h.sender_key_set_version,
+            recipient: h.recipient,
+            recipient_key_set_version: h.recipient_key_set_version,
+        })
+    }
+}
+
 fn verify(identity: &IdentityPublicKey, message: &[u8], signature: &[u8]) -> Result<()> {
     identity.verify(
         LABEL_SHARE,

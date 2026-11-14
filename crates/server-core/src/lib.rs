@@ -18,6 +18,7 @@ pub mod login;
 pub mod prelogin;
 pub mod recovery;
 pub mod transparency;
+pub mod vaults;
 
 pub use error::{Error, Result};
 
