@@ -1,0 +1,107 @@
+[package]
+name = "blackboxus-fuzz"
+description = "Fuzz targets for every BlackBoxus parser that reads untrusted data"
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "1.5", features = ["derive"] }
+libfuzzer-sys = "0.4.13"
+server-core = { path = "../crates/server-core" }
+server-worker = { path = "../crates/server-worker" }
+vault-core = { path = "../crates/vault-core", features = ["fuzzing"] }
+
+# Kept out of the main workspace: it builds only with nightly Rust.
+[workspace]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "enrolment"
+path = "fuzz_targets/enrolment.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "item_content"
+path = "fuzz_targets/item_content.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "item_envelope"
+path = "fuzz_targets/item_envelope.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kt_proofs"
+path = "fuzz_targets/kt_proofs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "opaque_client"
+path = "fuzz_targets/opaque_client.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "opaque_server"
+path = "fuzz_targets/opaque_server.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "revision_log"
+path = "fuzz_targets/revision_log.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sealed_to_me"
+path = "fuzz_targets/sealed_to_me.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "server_http"
+path = "fuzz_targets/server_http.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "signed_objects"
+path = "fuzz_targets/signed_objects.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "text_keys"
+path = "fuzz_targets/text_keys.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tampering"
+path = "fuzz_targets/tampering.rs"
+test = false
+doc = false
+bench = false

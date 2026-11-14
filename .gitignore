@@ -27,3 +27,9 @@ secrets/
 *.swp
 .DS_Store
 Thumbs.db
+
+# Fuzzing
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/coverage/

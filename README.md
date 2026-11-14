@@ -63,6 +63,14 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
+Fuzz testing uses [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz):
+
+```sh
+cargo install cargo-fuzz
+cargo fuzz list
+cargo fuzz run -s none tampering -- -max_total_time=60
+```
+
 ## Roadmap
 
 1. Protocol specification and threat model

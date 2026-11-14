@@ -196,7 +196,7 @@ pub struct EnrolmentPayload {
 }
 
 impl EnrolmentPayload {
-    fn encode(&self) -> Result<Zeroizing<Vec<u8>>> {
+    pub(crate) fn encode(&self) -> Result<Zeroizing<Vec<u8>>> {
         let email = self.email.as_bytes();
         let server = self.server.as_bytes();
         let email_len = u8::try_from(email.len()).map_err(|_| Error::MalformedMessage)?;
@@ -220,7 +220,7 @@ impl EnrolmentPayload {
         Ok(out)
     }
 
-    fn decode(bytes: &[u8]) -> Result<Self> {
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self> {
         let mut r = Reader(bytes);
         if r.u16()? != FORMAT_VERSION {
             return Err(Error::MalformedMessage);

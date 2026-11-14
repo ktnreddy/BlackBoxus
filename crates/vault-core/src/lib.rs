@@ -34,6 +34,9 @@
 mod aead;
 pub mod device;
 mod error;
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub mod fuzzing;
 mod identity;
 mod item;
 mod kdf;

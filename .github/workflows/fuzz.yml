@@ -1,0 +1,77 @@
+name: Fuzz
+
+# Feeds random and tampered inputs to every parser that reads untrusted
+# data (see fuzz/fuzz_targets). A short run follows every push to main; a
+# longer weekly run also checks memory safety with AddressSanitizer.
+
+on:
+  push:
+    branches: [main]
+    paths: ["crates/**", "fuzz/**", ".github/workflows/fuzz.yml"]
+  schedule:
+    - cron: "41 2 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: Fuzz (${{ github.event_name == 'schedule' && 'weekly, AddressSanitizer' || 'quick' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      # Quick runs use stable Rust without a sanitizer; the weekly run uses a
+      # pinned nightly with AddressSanitizer for the unsafe code in
+      # dependencies.
+      TOOLCHAIN: ${{ github.event_name == 'schedule' && 'nightly-2026-11-01' || '1.97.0' }}
+      SANITIZER: ${{ github.event_name == 'schedule' && 'address' || 'none' }}
+      SECONDS_PER_TARGET: ${{ github.event_name == 'schedule' && '300' || '20' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ env.TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: fuzz
+          key: ${{ env.TOOLCHAIN }}
+      - name: Install cargo-fuzz
+        run: cargo install --locked cargo-fuzz@0.13.2
+      - name: Restore corpus
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: fuzz-corpus-
+      - name: Build
+        run: cargo +"$TOOLCHAIN" fuzz build -s "$SANITIZER" -O --debug-assertions
+      - name: Run every target
+        run: |
+          set -u
+          failed=""
+          for target in $(cargo +"$TOOLCHAIN" fuzz list); do
+            echo "::group::$target"
+            if ! cargo +"$TOOLCHAIN" fuzz run -s "$SANITIZER" -O --debug-assertions "$target" -- \
+                 -max_total_time="$SECONDS_PER_TARGET" -rss_limit_mb=2048 -max_len=8192; then
+              failed="$failed $target"
+            fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::Fuzz targets found a problem:$failed"
+            exit 1
+          fi
+      - name: Keep the inputs that failed
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts
+          retention-days: 30

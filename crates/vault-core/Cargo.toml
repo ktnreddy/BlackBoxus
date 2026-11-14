@@ -38,3 +38,8 @@ ml-dsa = "0.1.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 x-wing = { version = "0.1.1", features = ["hazmat"] }
+
+[features]
+# Exposes internal decoders to the fuzz targets in `fuzz/`. Never enable in
+# a release build.
+fuzzing = []
