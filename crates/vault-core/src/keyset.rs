@@ -67,6 +67,8 @@ pub enum UnlockMethod {
     Device,
     /// Recovery key.
     Recovery,
+    /// Emergency key released to a trusted contact.
+    TrustedContact,
 }
 
 impl UnlockMethod {
@@ -76,6 +78,7 @@ impl UnlockMethod {
             Self::Passkey => 2,
             Self::Device => 3,
             Self::Recovery => 4,
+            Self::TrustedContact => 5,
         }
     }
 }

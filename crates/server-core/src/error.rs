@@ -21,6 +21,14 @@ pub enum Error {
     /// A write does not extend the current state; re-read and retry.
     #[error("conflict with a concurrent change")]
     Conflict,
+
+    /// The request is not allowed in the current state.
+    #[error("not allowed")]
+    NotAllowed,
+
+    /// A waiting period has not yet passed.
+    #[error("waiting period not over")]
+    TooEarly,
 }
 
 impl From<vault_core::Error> for Error {

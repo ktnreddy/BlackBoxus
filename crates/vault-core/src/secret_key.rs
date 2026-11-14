@@ -182,11 +182,11 @@ fn low_five_bits(v: u128) -> u8 {
     u8::try_from(v & 0x1F).unwrap_or(0)
 }
 
-fn alphabet_char(digit: u8) -> u8 {
+pub(crate) fn alphabet_char(digit: u8) -> u8 {
     ALPHABET.get(usize::from(digit)).copied().unwrap_or(b'0')
 }
 
-fn decode_char(c: u8) -> Option<u8> {
+pub(crate) fn decode_char(c: u8) -> Option<u8> {
     let c = match c {
         b'O' => b'0',
         b'I' | b'L' => b'1',

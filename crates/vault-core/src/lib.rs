@@ -32,6 +32,7 @@
 //! ```
 
 mod aead;
+pub mod device;
 mod error;
 mod identity;
 mod item;
@@ -42,6 +43,7 @@ pub mod log;
 pub mod login;
 mod password;
 mod random;
+pub mod recovery;
 mod secret_key;
 mod signature;
 pub mod transparency;

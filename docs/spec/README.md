@@ -13,8 +13,8 @@
 | 7 | [Vaults and sharing](07-vaults-and-sharing.md): vault keys, signed X-Wing shares, key replacement | Draft, implemented |
 | 8 | [Revision log](08-revision-log.md): signed hash chain, roles, rollback and fork detection | Draft, implemented |
 | 9 | [Key transparency](09-key-transparency.md): append-only key log, proofs, safety numbers | Draft, implemented |
-| 10 | Device enrolment: adding devices, QR transfer, biometric and passkey unlock | Planned |
-| 11 | Recovery: Emergency Kit and trusted-contact access | Planned |
+| 10 | [Devices and unlocking](10-devices.md): QR enrolment, device keys, passkey unlock | Draft, implemented |
+| 11 | [Account recovery](11-recovery.md): recovery key, trusted-contact emergency access | Draft, implemented |
 | 12 | Server API: endpoints and the checks each one performs | Planned |
 | 13 | Security considerations: what each section protects against, and what it does not | Planned |
 

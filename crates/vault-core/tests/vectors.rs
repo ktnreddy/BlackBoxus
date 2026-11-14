@@ -411,3 +411,105 @@ fn key_transparency_vectors_match() {
     let bundle = hex::decode(&v.fingerprint_signed_bundle_hex).unwrap();
     assert_eq!(fingerprint(&account, &bundle), v.fingerprint);
 }
+
+const DEVICES: &str = include_str!("../../../docs/spec/vectors/10-devices.json");
+
+#[derive(Deserialize)]
+struct DeviceVector {
+    qr_text: String,
+    account_id_hex: String,
+    email: String,
+    server: String,
+    secret_key_hex: String,
+    sealed_hex: String,
+    prf_input_hex: String,
+    prf_output_hex: String,
+    credential_id_hex: String,
+    passkey_wrapping_key_hex: String,
+}
+
+#[test]
+fn device_vectors_match() {
+    use vault_core::AccountId;
+    use vault_core::device::{EnrolmentOffer, passkey_prf_input, passkey_wrapping_key};
+
+    let v: DeviceVector = serde_json::from_str(DEVICES).unwrap();
+    let offer = EnrolmentOffer::from_qr_text(&v.qr_text).unwrap();
+    assert_eq!(offer.to_qr_text().as_str(), v.qr_text);
+    let payload = offer.open(&hex::decode(&v.sealed_hex).unwrap()).unwrap();
+    assert_eq!(hex::encode(payload.account_id.as_bytes()), v.account_id_hex);
+    assert_eq!(payload.email.as_str(), v.email);
+    assert_eq!(payload.server.as_str(), v.server);
+    assert_eq!(hex::encode(payload.secret_key.as_bytes()), v.secret_key_hex);
+
+    let account = AccountId::from_bytes(bytes16(&v.account_id_hex));
+    assert_eq!(hex::encode(passkey_prf_input(&account)), v.prf_input_hex);
+    let key = passkey_wrapping_key(
+        &hex::decode(&v.prf_output_hex).unwrap(),
+        &hex::decode(&v.credential_id_hex).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(hex::encode(key.as_bytes()), v.passkey_wrapping_key_hex);
+}
+
+const RECOVERY: &str = include_str!("../../../docs/spec/vectors/11-recovery.json");
+
+#[derive(Deserialize)]
+struct RecoveryVector {
+    recovery_key_hex: String,
+    recovery_key_display: String,
+    account_id_hex: String,
+    wrapping_key_hex: String,
+    auth_token_hex: String,
+    auth_verifier_hex: String,
+    grant_sample_hex: String,
+    grant_emergency_key_hex: String,
+    contact_account_id_hex: String,
+    owner_ed25519_public_key_hex: String,
+    owner_ml_dsa_public_key_hex: String,
+}
+
+#[test]
+fn recovery_vectors_match() {
+    use vault_core::AccountId;
+    use vault_core::recovery::{EmergencyGrant, RecoveryKey, check_auth_token};
+
+    let v: RecoveryVector = serde_json::from_str(RECOVERY).unwrap();
+    let key = RecoveryKey::parse(&v.recovery_key_display).unwrap();
+    assert_eq!(key.to_display_string().as_str(), v.recovery_key_display);
+    let raw: [u8; 32] = hex::decode(&v.recovery_key_hex)
+        .unwrap()
+        .try_into()
+        .unwrap();
+    assert_eq!(
+        RecoveryKey::from_bytes_for_test_vectors(raw)
+            .to_display_string()
+            .as_str(),
+        v.recovery_key_display
+    );
+
+    let account = AccountId::from_bytes(bytes16(&v.account_id_hex));
+    assert_eq!(
+        hex::encode(key.wrapping_key(&account).unwrap().as_bytes()),
+        v.wrapping_key_hex
+    );
+    let token = key.auth_token(&account).unwrap();
+    assert_eq!(hex::encode(token.as_bytes()), v.auth_token_hex);
+    let verifier: [u8; 32] = hex::decode(&v.auth_verifier_hex)
+        .unwrap()
+        .try_into()
+        .unwrap();
+    assert_eq!(key.auth_verifier(&account).unwrap(), verifier);
+    assert!(check_auth_token(&verifier, token.as_bytes()));
+
+    let grant = EmergencyGrant::inspect(&hex::decode(&v.grant_sample_hex).unwrap()).unwrap();
+    assert_eq!(grant.owner, account);
+    assert_eq!(
+        grant.contact,
+        AccountId::from_bytes(bytes16(&v.contact_account_id_hex))
+    );
+    assert_eq!(grant.wait_days, 7);
+    assert_eq!(v.grant_emergency_key_hex.len(), 64);
+    assert_eq!(v.owner_ed25519_public_key_hex.len(), 64);
+    assert_eq!(v.owner_ml_dsa_public_key_hex.len(), 3904);
+}

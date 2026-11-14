@@ -54,6 +54,7 @@ A wrapped key set is the key set encrypted under a 32-byte **wrapping key**. Pro
 | Passkey | 2 | Derived from the WebAuthn PRF output | Section 10 |
 | Device | 3 | Device key held in the secure element | Section 10 |
 | Recovery | 4 | Recovery key | Section 11 |
+| Trusted contact | 5 | Emergency key released to a trusted contact | Section 11 |
 
 Encoding:
 
