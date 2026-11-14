@@ -103,6 +103,8 @@ The server stores the parameters and salt and returns them when a device signs i
 - the minimums stop a malicious server from weakening the derivation;
 - the maximums stop a malicious server from making clients exhaust their memory or battery.
 
+Clients MUST create accounts with the default parameters unless the user explicitly chooses others, and SHOULD warn that doing so lets anyone who asks the server learn that the address has an account, because unknown addresses are answered with the defaults (3.8).
+
 The default of 128 MiB is more than six times the OWASP minimum while still fitting the memory limits of mobile devices. Password-manager extensions on mobile operating systems have strict memory caps; they unlock with a device key (Section 10) rather than by running Argon2id.
 
 ## 3.5 Two-secret key derivation

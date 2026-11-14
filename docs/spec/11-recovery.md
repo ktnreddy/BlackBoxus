@@ -39,9 +39,9 @@ The user can replace or remove the recovery key at any time; the server MUST the
 
 ## 11.3 Recovering with a recovery key
 
-1. The user enters their email address, Secret Key and recovery key. A user who lost the Secret Key too can only recover through a trusted contact.
+1. The user enters their email address and recovery key. The Secret Key is not needed: if the device does not have it, the client generates a new one in step 3 and shows a new Emergency Kit. The account ID returned in step 2 comes from the server, but a wrong one only makes unwrapping fail.
 2. The client sends `auth_token` to the server. The server compares `SHA-256(auth_token)` with the stored verifier in constant time, rate-limits attempts per account, and on success returns the method-4 wrapped key set.
-3. The client unwraps the key set, then the user chooses a new master password. The client registers it with OPAQUE (Section 4.4), wraps the key set again with method 1, and uploads it. The server MUST end all other sessions and notify the user by email.
+3. The client unwraps the key set, then the user chooses a new master password. The client derives new keys from it and the Secret Key (Section 3.5), registers with OPAQUE (Section 4.4), wraps the key set again with method 1, and uploads it with `recovery/finish` (Section 12.6). The server MUST end all other sessions and notify the user by email. Other devices that held an old Secret Key must be added again (Section 10).
 4. The client SHOULD then create a new recovery key, because the old one has been typed on this device.
 
 `auth_token` only proves the user holds the recovery key so the server will hand over the wrapped copy; it cannot decrypt anything. The wrapped copy alone is useless to the server: it needs the 256-bit recovery key.
@@ -87,7 +87,7 @@ The server holds each grant in one of three states:
 - The server releases the grant only when `now ≥ t + wait_days × 86400000` ms.
 - The owner can delete a grant at any time. A contact that already received the grant keeps access until the owner replaces their key set (Section 5.6), which every client SHOULD offer after a release.
 
-After a release, the contact can unlock the owner's key set and therefore read the owner's vaults. The contact cannot change the owner's master password or sign in as the owner without the owner's Secret Key; a later version may let the contact take over the account.
+After a release, the server lets the contact download every vault the owner may read (Section 12.8). The contact can unlock the owner's key set, which includes the owner's identity signing key, so the contact can read the owner's vaults **and** make changes signed as the owner. Owners MUST be told this when they add a trusted contact. The contact cannot sign in as the owner, because login needs the owner's master password and Secret Key, and cannot change them; a later version may let the contact take over the account.
 
 ## 11.6 Security considerations
 

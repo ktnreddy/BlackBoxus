@@ -11,6 +11,7 @@
 //! thin adapter crate, so the server can move to another platform by
 //! rewriting only that adapter.
 
+pub mod api;
 mod error;
 pub mod log;
 pub mod login;

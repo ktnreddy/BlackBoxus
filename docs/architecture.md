@@ -15,6 +15,8 @@ This document summarises the design. The normative protocol is in [`spec/`](spec
 | Compromised build pipeline | Pinned dependencies, dependency audits, signed and reproducible releases |
 | Malware on an unlocked device | Out of scope for confidentiality; exposure limited by auto-lock and per-item reveal |
 
+What the server can still see, and the known limits of these guarantees, are listed in [spec section 13](spec/13-security-considerations.md).
+
 ## Key hierarchy
 
 1. **Two secrets.** The master password (Unicode NFKC-normalised) and a 128-bit random Secret Key created on the first device. The Secret Key never reaches the server and is saved by the user in an Emergency Kit.

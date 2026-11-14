@@ -15,7 +15,7 @@
 | 9 | [Key transparency](09-key-transparency.md): append-only key log, proofs, safety numbers | Draft, implemented |
 | 10 | [Devices and unlocking](10-devices.md): QR enrolment, device keys, passkey unlock | Draft, implemented |
 | 11 | [Account recovery](11-recovery.md): recovery key, trusted-contact emergency access | Draft, implemented |
-| 12 | Server API: endpoints and the checks each one performs | Planned |
-| 13 | Security considerations: what each section protects against, and what it does not | Planned |
+| 12 | [Server API](12-server-api.md): endpoints, sessions, limits and the checks each one performs | Draft, implemented |
+| 13 | [Security considerations](13-security-considerations.md): guarantees, metadata, known limitations, review findings | Draft |
 
 Test vectors live in [`vectors/`](vectors/).

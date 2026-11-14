@@ -1215,6 +1215,7 @@ dependencies = [
  "opaque-ke",
  "rand_core 0.6.4",
  "sha2 0.11.1",
+ "subtle",
  "thiserror",
  "vault-core",
  "zeroize",
