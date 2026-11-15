@@ -21,7 +21,8 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 use vault_core::log::{
-    Checkpoint, LogEntry, Operation, Role, VaultState, bundle_hash, envelope_hash, verify_log,
+    Checkpoint, LogEntry, Operation, Role, VaultState, bundle_hash, entry_hash, envelope_hash,
+    verify_log,
 };
 use vault_core::{
     AccountId, Item, ItemId, MAX_ENVELOPE_LEN, OWNER_WRAPPED_VAULT_KEY_LEN, ShareInfo,
@@ -400,6 +401,58 @@ impl VaultReplica {
             },
         )?;
         Ok((item_id, self.append(unlocked, &entry, Some(&envelope))?))
+    }
+
+    /// Adds many new items at once, for imports: each entry is chained to
+    /// the one before it, so the whole batch is verified by one sync at the
+    /// end instead of one per item. Send the requests in order. If one is
+    /// refused (for example `conflict`), stop, sync, and build the rest
+    /// again with a new call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::InvalidResponse`] before the first sync, while
+    /// the vault key must be replaced, or without the current vault key.
+    pub fn put_new_items(
+        &self,
+        unlocked: &Unlocked,
+        items: &[Item],
+        now_ms: u64,
+    ) -> Result<Vec<(ItemId, Request)>> {
+        let state = self.state.as_ref().ok_or(ClientError::InvalidResponse)?;
+        if state.rotation_required {
+            return Err(ClientError::InvalidResponse);
+        }
+        let key = self
+            .keys
+            .get(&state.vault_key_version)
+            .ok_or(ClientError::InvalidResponse)?;
+        let mut seq = state.next_seq();
+        let mut prev_hash = state.head.hash;
+        let mut out = Vec::with_capacity(items.len());
+        for item in items {
+            let item_id = ItemId::generate()?;
+            let envelope = seal_item(item, &key.key, &self.vault_id, &item_id, 1)?;
+            let entry = LogEntry {
+                vault_id: self.vault_id,
+                seq,
+                prev_hash,
+                author: *unlocked.session.account_id(),
+                author_key_set_version: unlocked.key_set_version,
+                timestamp_ms: now_ms,
+                operation: Operation::PutItem {
+                    item_id,
+                    revision: 1,
+                    vault_key_version: key.version,
+                    envelope_hash: envelope_hash(&envelope),
+                },
+            }
+            .sign(&unlocked.key_set)?;
+            prev_hash = entry_hash(&entry);
+            seq = seq.checked_add(1).ok_or(ClientError::InvalidResponse)?;
+            out.push((item_id, self.append(unlocked, &entry, Some(&envelope))?));
+        }
+        Ok(out)
     }
 
     /// Deletes an item.

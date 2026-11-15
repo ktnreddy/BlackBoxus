@@ -210,3 +210,60 @@ fn sharing_a_vault_after_checking_the_safety_number() -> Result<(), AppError> {
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
+
+#[test]
+#[ignore = "needs a running server and BLACKBOXUS_LOG_KEY"]
+fn importing_many_items_in_batches() -> Result<(), AppError> {
+    use blackboxus_desktop::http::Transport;
+    use blackboxus_desktop::vaults::{VaultFiles, Vaults, log_key};
+    use client_core::vaults::written;
+    use vault_core::{Field, FieldKind, Item, ItemType, VaultId};
+
+    let transport = Https::new();
+    let server = ServerIdentity::new(ORIGIN)?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let dir = std::env::temp_dir().join(format!("blackboxus-import-{nonce}"));
+    let (unlocked, _, _) = create_account(
+        &transport,
+        &server,
+        &format!("import-{nonce}@example.com"),
+        PASSWORD,
+    )?;
+    let mut vaults = Vaults::new(VaultFiles::new(dir.clone()), log_key()?);
+    vaults.sync(&transport, &unlocked)?;
+    let id = VaultId::from_bytes(
+        wire::unb64_array(
+            &vaults
+                .summaries(&unlocked)
+                .first()
+                .map(|v| v.id.clone())
+                .unwrap_or_default(),
+        )
+        .unwrap_or_default(),
+    );
+    let items: Vec<Item> = (0..120)
+        .map(|i| Item {
+            item_type: ItemType::Login,
+            created_ms: 1,
+            modified_ms: 1,
+            fields: vec![
+                Field::new(FieldKind::Title, &format!("site {i:03}")),
+                Field::new(FieldKind::Password, "pw"),
+            ],
+        })
+        .collect();
+    let started = std::time::Instant::now();
+    for batch in items.chunks(50) {
+        for request in vaults.new_items_batch(&unlocked, &id, batch)? {
+            written(&transport.send(&request)?)?;
+        }
+        vaults.sync_vault(&transport, &unlocked, id)?;
+    }
+    assert_eq!(vaults.items(&id)?.len(), 120);
+    assert!(started.elapsed().as_secs() < 60);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}

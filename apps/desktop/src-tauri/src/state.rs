@@ -9,6 +9,7 @@ use serde::Serialize;
 use crate::clipboard::SecretClipboard;
 use crate::error::AppError;
 use crate::http::{Https, ORIGIN};
+use crate::importer::{ImportStatus, PendingImport};
 use crate::storage::{AccountRecord, Storage};
 use crate::vaults::{VaultFiles, Vaults, log_key};
 
@@ -19,6 +20,8 @@ pub struct Session {
     pub unlocked: Unlocked,
     /// The account's vaults.
     pub vaults: Vaults,
+    /// A file chosen for import, until imported or cancelled.
+    pub pending_import: Option<PendingImport>,
 }
 
 /// The account set up on this computer, as shown in the window.
@@ -58,6 +61,8 @@ pub struct AppState {
     pub transport: Https,
     /// Copies secrets and clears them again.
     pub clipboard: SecretClipboard,
+    /// Progress of the running import.
+    pub import: ImportStatus,
 }
 
 impl core::fmt::Debug for AppState {
@@ -90,6 +95,7 @@ impl AppState {
             storage,
             transport,
             clipboard: SecretClipboard::default(),
+            import: ImportStatus::default(),
         }
     }
 
@@ -133,6 +139,7 @@ impl AppState {
         Ok(Session {
             unlocked,
             vaults: Vaults::new(VaultFiles::new(self.storage.vault_dir()), log_key()?),
+            pending_import: None,
         })
     }
 

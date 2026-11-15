@@ -14,6 +14,7 @@
   } from "../api";
   import ItemDetail from "./vault/ItemDetail.svelte";
   import GeneratorDialog from "./vault/GeneratorDialog.svelte";
+  import ImportDialog from "./vault/ImportDialog.svelte";
   import ItemEditor from "./vault/ItemEditor.svelte";
   import ShareVault from "./vault/ShareVault.svelte";
 
@@ -35,6 +36,7 @@
   let notice = $state("");
   let sharing = $state(false);
   let generatorOpen = $state(false);
+  let importOpen = $state(false);
   let now = $state(Date.now());
 
   const vault = $derived(vaults.find((v) => v.id === vaultId) ?? null);
@@ -202,6 +204,9 @@
     <button type="button" class="side-item plain" onclick={() => (generatorOpen = true)}>
       <span class="side-name"><Icon name="wand" size={16} />Password generator</span>
     </button>
+    <button type="button" class="side-item plain" onclick={() => (importOpen = true)}>
+      <span class="side-name"><Icon name="upload" size={16} />Import passwords</span>
+    </button>
     <div class="side-foot">
       <button type="button" class="btn ghost sm grow" onclick={lockNow}>
         <Icon name="lock" size={15} />Lock now
@@ -307,6 +312,19 @@
   </main>
   {/if}
 </div>
+
+{#if importOpen}
+  <ImportDialog
+    {vaults}
+    current={vaultId}
+    onclose={() => (importOpen = false)}
+    ondone={async (id) => {
+      vaultId = id;
+      sharing = false;
+      await sync();
+    }}
+  />
+{/if}
 
 {#if generatorOpen}
   <GeneratorDialog onclose={() => (generatorOpen = false)} onnotice={showNotice} />

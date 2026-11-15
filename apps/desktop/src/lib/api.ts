@@ -207,3 +207,36 @@ export function shareVault(
 export function compareSafetyNumber(sharingId: string): Promise<LookedUp> {
   return invoke<LookedUp>("compare_safety_number", { sharingId });
 }
+
+export interface ImportPreview {
+  source: string;
+  logins: number;
+  notes: number;
+  skipped: number;
+  sample: string[];
+}
+
+export interface ImportProgress {
+  running: boolean;
+  done: number;
+  total: number;
+  waiting_seconds: number | null;
+  error: string | null;
+  finished: boolean;
+}
+
+export function importChooseFile(): Promise<{ file_name: string; preview: ImportPreview } | null> {
+  return invoke("import_choose_file");
+}
+
+export function importStart(vault: string): Promise<void> {
+  return invoke<void>("import_start", { vault });
+}
+
+export function importProgress(): Promise<ImportProgress> {
+  return invoke<ImportProgress>("import_progress");
+}
+
+export function importFinish(deleteFile: boolean): Promise<void> {
+  return invoke<void>("import_finish", { deleteFile });
+}

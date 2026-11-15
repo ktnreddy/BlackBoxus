@@ -778,6 +778,43 @@ fn create_write_sync_and_keep_a_local_copy() {
 }
 
 #[test]
+fn a_batch_of_new_items_verifies_in_one_sync() {
+    let mut server = Server::new();
+    let alice = sign_up(&mut server, "alice@example.com");
+    let unlocked = sign_in(
+        &mut server,
+        "alice@example.com",
+        PASSWORD,
+        &alice.secret_key,
+    )
+    .unwrap();
+    let mut vault = new_vault(&mut server, &unlocked);
+    let items: Vec<Item> = (0..25)
+        .map(|i| login_item(&format!("site {i:02}"), "pw"))
+        .collect();
+    let requests = vault.put_new_items(&unlocked, &items, 2).unwrap();
+    assert_eq!(requests.len(), 25);
+    for (_, request) in &requests {
+        written(&server.send(request)).unwrap();
+    }
+    sync(&mut server, &mut vault, &unlocked).unwrap();
+    assert_eq!(titles(&vault).len(), 25);
+    assert_eq!(titles(&vault)[24], "site 24");
+
+    // A batch built before another write lands is refused, not forked.
+    let stale = vault
+        .put_new_items(&unlocked, &[login_item("x", "1")], 3)
+        .unwrap();
+    let (_, other) = vault
+        .put_item(&unlocked, None, &login_item("y", "2"), 3)
+        .unwrap();
+    written(&server.send(&other)).unwrap();
+    assert!(written(&server.send(&stale[0].1)).is_err());
+    sync(&mut server, &mut vault, &unlocked).unwrap();
+    assert_eq!(titles(&vault).len(), 26);
+}
+
+#[test]
 fn two_devices_writing_at_once_conflict_instead_of_forking() {
     let mut server = Server::new();
     let alice = sign_up(&mut server, "alice@example.com");

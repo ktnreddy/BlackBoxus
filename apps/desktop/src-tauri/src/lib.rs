@@ -11,6 +11,8 @@ mod error;
 pub mod flows;
 mod generator;
 pub mod http;
+mod import;
+mod importer;
 mod items;
 mod sharing_id;
 mod state;
@@ -41,6 +43,7 @@ pub fn run() -> Result<(), StartError> {
                 let _ = window.set_focus();
             }
         }))
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             storage::init_secret_store()?;
             let dir = app.path().app_data_dir()?;
@@ -71,6 +74,10 @@ pub fn run() -> Result<(), StartError> {
             commands::share_vault,
             commands::compare_safety_number,
             commands::copy_text,
+            commands::import_choose_file,
+            commands::import_start,
+            commands::import_progress,
+            commands::import_finish,
         ])
         .run(tauri::generate_context!())
 }

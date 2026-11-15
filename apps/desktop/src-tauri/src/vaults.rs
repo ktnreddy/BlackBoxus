@@ -608,6 +608,42 @@ impl Vaults {
         Err(AppError::Server)
     }
 
+    /// Requests that add `items` as new items, chained so they are sent in
+    /// order and verified by one sync afterwards.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NotFound`] for an unknown vault, or an error if
+    /// encryption or signing fails.
+    pub fn new_items_batch(
+        &self,
+        unlocked: &Unlocked,
+        id: &VaultId,
+        items: &[Item],
+    ) -> Result<Vec<client_core::Request>, AppError> {
+        Ok(self
+            .replica(id)?
+            .put_new_items(unlocked, items, now_ms())
+            .map_err(vault_error)?
+            .into_iter()
+            .map(|(_, request)| request)
+            .collect())
+    }
+
+    /// Syncs one vault.
+    ///
+    /// # Errors
+    ///
+    /// Returns a server, network or verification error.
+    pub fn sync_vault(
+        &mut self,
+        transport: &impl Transport,
+        unlocked: &Unlocked,
+        id: VaultId,
+    ) -> Result<(), AppError> {
+        self.sync_one(transport, unlocked, id)
+    }
+
     /// Deletes an item, then syncs the vault.
     ///
     /// # Errors

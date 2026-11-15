@@ -25,6 +25,10 @@
     "allow-look-up-member",
     "allow-share-vault",
     "allow-compare-safety-number",
-    "allow-copy-text"
+    "allow-copy-text",
+    "allow-import-choose-file",
+    "allow-import-start",
+    "allow-import-progress",
+    "allow-import-finish"
   ]
 }

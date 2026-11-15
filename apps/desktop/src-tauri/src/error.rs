@@ -96,6 +96,15 @@ pub enum AppError {
     /// Sharing with yourself.
     #[error("That's your own sharing ID.")]
     SelfShare,
+    /// The import file could not be read.
+    #[error("That file isn't a password export BlackBoxus can read. Export as CSV and try again.")]
+    ImportUnreadable,
+    /// The import file is too large.
+    #[error("That file is too large to import (the limit is 20 MB and 10,000 entries).")]
+    ImportTooLarge,
+    /// An import is already running.
+    #[error("An import is already running.")]
+    ImportRunning,
     /// The vaults are locked.
     #[error("Your vaults are locked. Unlock them first.")]
     Locked,
@@ -136,6 +145,9 @@ impl AppError {
             Self::ReadOnly => "read_only",
             Self::Clipboard => "clipboard",
             Self::Locked => "locked",
+            Self::ImportUnreadable => "import_unreadable",
+            Self::ImportTooLarge => "import_too_large",
+            Self::ImportRunning => "import_running",
             Self::InvalidSharingId => "invalid_sharing_id",
             Self::NotVerified => "not_verified",
             Self::AlreadyMember => "already_member",

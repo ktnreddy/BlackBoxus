@@ -70,6 +70,29 @@ caught.
   random number generator without bias. It opens from the sidebar, or
   from a password field to fill it in.
 
+## Importing
+
+"Import passwords" in the sidebar reads a CSV export from another password
+manager. The format is recognised from its header row: Bitwarden,
+1Password, Chrome, Edge, Brave, Firefox, Safari, LastPass, KeePass,
+KeePassXC, Dashlane, NordPass and Proton Pass exports all work.
+
+- The file is chosen in the system's file picker and read in Rust; only
+  titles and counts reach the window, shown for checking before anything
+  is saved. Files over 20 MB or 10,000 entries are refused.
+- Rows become logins (title, username, password, website, one-time code
+  secret, notes) or secure notes. Rows with nothing to keep are left out
+  and counted.
+- Items are written 50 at a time as a chain of log entries, then the vault
+  is synced and verified once per batch (`put_new_items` in
+  `client-core`). If the server's request limit is reached, the import
+  waits and carries on; if another device writes meanwhile, the rest of
+  the batch is rebuilt on top of its change.
+- Afterwards the app offers to delete the export file, which holds every
+  password unencrypted.
+
+Folders, tags, custom fields and attachments are not imported yet.
+
 ## Sharing
 
 Vaults are shared by **sharing ID**: the account ID written as 26

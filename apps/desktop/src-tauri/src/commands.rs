@@ -395,3 +395,94 @@ pub(crate) fn copy_text(
 ) -> Result<(), AppError> {
     state.clipboard.copy(text)
 }
+
+/// What [`import_choose_file`] returns.
+#[derive(Debug, Serialize)]
+pub(crate) struct ImportChosen {
+    file_name: String,
+    preview: crate::import::Preview,
+}
+
+/// Opens the system file picker, reads the chosen CSV export here in Rust
+/// and keeps its items until the user confirms. Returns `None` if the user
+/// cancelled the picker.
+#[tauri::command]
+pub(crate) async fn import_choose_file(app: AppHandle) -> Result<Option<ImportChosen>, AppError> {
+    use tauri_plugin_dialog::DialogExt;
+    let picker = app.clone();
+    let chosen = tauri::async_runtime::spawn_blocking(move || {
+        picker
+            .dialog()
+            .file()
+            .set_title("Choose a password export")
+            .add_filter("CSV export", &["csv"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|_| AppError::Internal)?;
+    let Some(path) = chosen.and_then(|f| f.into_path().ok()) else {
+        return Ok(None);
+    };
+    blocking(app, move |state| {
+        let size = std::fs::metadata(&path)
+            .map_err(|_| AppError::ImportUnreadable)?
+            .len();
+        if size > crate::import::MAX_FILE_BYTES {
+            return Err(AppError::ImportTooLarge);
+        }
+        let bytes = Zeroizing::new(std::fs::read(&path).map_err(|_| AppError::ImportUnreadable)?);
+        let parsed = crate::import::parse(&bytes, now_ms())?;
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let preview = parsed.preview.clone();
+        state.with_session(|s| {
+            s.pending_import = Some(crate::importer::PendingImport {
+                path,
+                items: parsed.items,
+                preview: parsed.preview,
+            });
+            Ok(())
+        })?;
+        Ok(Some(ImportChosen { file_name, preview }))
+    })
+    .await
+}
+
+/// Starts importing the chosen file into a vault.
+#[tauri::command]
+pub(crate) fn import_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    vault: String,
+) -> Result<(), AppError> {
+    let id = vault_id(&vault)?;
+    let items = state.with_session(|s| {
+        let pending = s.pending_import.as_mut().ok_or(AppError::NotFound)?;
+        Ok(std::mem::take(&mut pending.items))
+    })?;
+    if items.is_empty() {
+        return Err(AppError::NotFound);
+    }
+    state.import.start(items.len())?;
+    crate::importer::spawn(app, id, items);
+    Ok(())
+}
+
+/// How the import is going.
+#[tauri::command]
+pub(crate) fn import_progress(state: State<'_, AppState>) -> crate::importer::Progress {
+    state.import.get()
+}
+
+/// Forgets the chosen file. With `delete_file`, also deletes it, since it
+/// holds passwords in plain text.
+#[tauri::command]
+pub(crate) fn import_finish(state: State<'_, AppState>, delete_file: bool) -> Result<(), AppError> {
+    let pending = state.with_session(|s| Ok(s.pending_import.take()))?;
+    if let (true, Some(p)) = (delete_file, pending) {
+        std::fs::remove_file(&p.path).map_err(|_| AppError::Storage)?;
+    }
+    Ok(())
+}

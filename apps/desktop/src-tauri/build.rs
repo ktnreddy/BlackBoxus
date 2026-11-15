@@ -24,6 +24,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "share_vault",
             "compare_safety_number",
             "copy_text",
+            "import_choose_file",
+            "import_start",
+            "import_progress",
+            "import_finish",
         ]),
     ))?;
     Ok(())
