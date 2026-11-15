@@ -20,6 +20,7 @@ mod sharing_id;
 mod state;
 pub mod storage;
 mod strength;
+mod totp;
 pub mod vaults;
 
 use tauri::Manager;
@@ -84,6 +85,7 @@ pub fn run() -> Result<(), StartError> {
             commands::hello_enable,
             commands::hello_disable,
             commands::unlock_with_hello,
+            commands::totp_code,
         ])
         .run(tauri::generate_context!())
 }

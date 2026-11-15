@@ -1,7 +1,9 @@
 <script lang="ts">
   import Icon from "../../components/Icon.svelte";
+  import TotpField from "./TotpField.svelte";
   import {
     copyField,
+    copyText,
     deleteItem,
     errorMessage,
     getItem,
@@ -32,7 +34,7 @@
     password: "Password",
     url: "Website",
     notes: "Notes",
-    totp: "One-time code secret",
+    totp: "One-time code",
     cardholder: "Name on card",
     card_number: "Card number",
     card_expiry: "Expiry date",
@@ -55,6 +57,19 @@
   let revealed = $state<Record<number, string>>({});
   let confirmDelete = $state(false);
   let deleting = $state(false);
+  /** The current one-time codes, by field index. */
+  let codes = $state<Record<number, string>>({});
+
+  async function copyCode(index: number) {
+    const code = codes[index];
+    if (!code) return;
+    try {
+      await copyText(code);
+      onnotice("Code copied. The clipboard clears in 30 seconds.");
+    } catch (e) {
+      onnotice(errorMessage(e));
+    }
+  }
 
   $effect(() => {
     const [v, id] = [vault, itemId];
@@ -166,7 +181,9 @@
           <div class="field-text">
             <dt class="small">{label(f)}</dt>
             <dd>
-              {#if f.concealed}
+              {#if f.kind === "totp"}
+                <TotpField {vault} item={itemId} index={i} bind:code={codes[i]} />
+              {:else if f.concealed}
                 {#if i in revealed}
                   <span class="mono selectable">{revealed[i]}</span>
                 {:else}
@@ -180,7 +197,16 @@
             </dd>
           </div>
           <div class="field-actions">
-            {#if f.concealed}
+            {#if f.kind === "totp"}
+              <button
+                type="button"
+                class="btn primary sm"
+                disabled={!codes[i]}
+                onclick={() => copyCode(i)}
+              >
+                <Icon name="copy" size={15} />Copy
+              </button>
+            {:else if f.concealed}
               <button
                 type="button"
                 class="icon-btn"

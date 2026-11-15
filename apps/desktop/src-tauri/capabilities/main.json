@@ -32,6 +32,7 @@
     "allow-import-finish",
     "allow-hello-enable",
     "allow-hello-disable",
-    "allow-unlock-with-hello"
+    "allow-unlock-with-hello",
+    "allow-totp-code"
   ]
 }

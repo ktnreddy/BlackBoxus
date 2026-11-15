@@ -228,6 +228,9 @@ pub fn build(input: &ItemInput, created_ms: u64, now_ms: u64) -> Result<Item, Ap
         if f.value.trim().is_empty() {
             continue;
         }
+        if kind == FieldKind::TotpSecret {
+            crate::totp::Totp::parse(&f.value)?;
+        }
         fields.push(Field::labelled(kind, f.label.trim(), &f.value));
     }
     Ok(Item {

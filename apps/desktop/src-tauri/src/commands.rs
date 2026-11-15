@@ -581,3 +581,19 @@ pub(crate) async fn unlock_with_hello(app: AppHandle) -> Result<AppStatus, AppEr
     })
     .await
 }
+
+/// The current one-time code from an item's code secret.
+#[tauri::command]
+pub(crate) fn totp_code(
+    state: State<'_, AppState>,
+    vault: String,
+    item: String,
+    index: usize,
+) -> Result<crate::totp::Code, AppError> {
+    let (id, item_id) = (vault_id(&vault)?, item_id(&item)?);
+    let totp = state.with_session(|s| {
+        let item = s.vaults.item(&id, &item_id)?;
+        crate::totp::Totp::parse(&items::field_at(&item, index)?.value)
+    })?;
+    totp.code_at(now_ms() / 1000)
+}

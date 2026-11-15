@@ -254,3 +254,13 @@ export function helloDisable(): Promise<AppStatus> {
 export function unlockWithHello(): Promise<AppStatus> {
   return invoke<AppStatus>("unlock_with_hello");
 }
+
+export interface TotpCode {
+  code: string;
+  period: number;
+  remaining: number;
+}
+
+export function totpCode(vault: string, item: string, index: number): Promise<TotpCode> {
+  return invoke<TotpCode>("totp_code", { vault, item, index });
+}

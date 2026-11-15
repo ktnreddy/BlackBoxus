@@ -31,6 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "hello_enable",
             "hello_disable",
             "unlock_with_hello",
+            "totp_code",
         ]),
     ))?;
     Ok(())

@@ -131,6 +131,11 @@ pub enum AppError {
         "You're offline, so your vaults are read-only. Changes can be made once you're connected again."
     )]
     ReadOnlyOffline,
+    /// A one-time code secret could not be read.
+    #[error(
+        "That isn't a one-time code secret. Paste the setup key or otpauth:// link the site shows."
+    )]
+    InvalidTotp,
     /// The vaults are locked.
     #[error("Your vaults are locked. Unlock them first.")]
     Locked,
@@ -171,6 +176,7 @@ impl AppError {
             Self::ReadOnly => "read_only",
             Self::Clipboard => "clipboard",
             Self::Locked => "locked",
+            Self::InvalidTotp => "invalid_totp",
             Self::ReadOnlyOffline => "read_only_offline",
             Self::HelloUnavailable => "hello_unavailable",
             Self::HelloCancelled => "hello_cancelled",

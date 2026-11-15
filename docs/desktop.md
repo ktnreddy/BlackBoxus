@@ -61,6 +61,12 @@ caught.
   deleted. Item lists and views never carry concealed values (passwords,
   card numbers, security codes); the window asks for one only when the
   eye is clicked, and hides it again after 30 seconds.
+- **One-time codes:** a login can hold a two-factor secret, pasted as the
+  setup key or the `otpauth://totp/` link a site shows. The item shows the
+  current code with a countdown, computed in Rust (RFC 6238; SHA-1,
+  SHA-256 or SHA-512, 6 to 8 digits); the secret itself stays hidden.
+  Counter-based (HOTP) secrets are refused, since a synced item can't
+  safely hold a counter.
 - **Copying** happens in Rust, so concealed values never pass through the
   window. On Windows the copy is kept out of clipboard history and cloud
   clipboard sync, and it is cleared after 30 seconds, or on locking, if

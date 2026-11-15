@@ -40,6 +40,12 @@
       { kind: "username", label: "Username or email" },
       { kind: "password", label: "Password", concealed: true },
       { kind: "url", label: "Website", placeholder: "https://" },
+      {
+        kind: "totp",
+        label: "One-time code secret",
+        concealed: true,
+        placeholder: "Setup key or otpauth:// link",
+      },
       { kind: "notes", label: "Notes", multiline: true },
     ],
     note: [{ kind: "notes", label: "Note", multiline: true }],
