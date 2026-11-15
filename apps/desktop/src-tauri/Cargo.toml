@@ -20,7 +20,11 @@ path = "src/main.rs"
 tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
+# Copies secrets with Windows told to keep them out of clipboard history
+# and cloud sync.
+arboard = { version = "3.6", default-features = false }
 client-core = { version = "0.0.1", path = "../../../crates/client-core" }
+getrandom = "0.4.3"
 keyring-core = "1.0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -6,15 +6,18 @@
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
-use vault_core::{ClientIdentity, SecretKey, ServerIdentity};
+use vault_core::{ClientIdentity, ItemId, SecretKey, ServerIdentity, VaultId};
 use zeroize::Zeroizing;
 
 use crate::error::AppError;
 use crate::flows;
+use crate::generator::{self, Generated, Options};
 use crate::http::ORIGIN;
+use crate::items::{self, ItemInput, ItemSummary, ItemView};
 use crate::state::{AppState, AppStatus};
 use crate::storage::AccountRecord;
 use crate::strength::{self, Rating};
+use crate::vaults::{LookedUp, MemberView, VaultSummary};
 
 /// The Emergency Kit, shown once after sign-up.
 #[derive(Debug, Serialize)]
@@ -93,7 +96,7 @@ pub(crate) async fn create_account(
         let identity = ClientIdentity::new(&email)?;
         let record = AccountRecord::new(&identity, unlocked.session.account_id(), ORIGIN);
         state.storage.save_account(&record, &secret_key)?;
-        state.set_account(record, unlocked);
+        state.set_account(record, unlocked)?;
         Ok(Created {
             status: state.status(),
             kit: KitView {
@@ -128,7 +131,7 @@ pub(crate) async fn sign_in(
             flows::sign_in(&state.transport, &server()?, &email, &secret_key, &password)?;
         let record = AccountRecord::new(&identity, unlocked.session.account_id(), ORIGIN);
         state.storage.save_account(&record, &secret_key)?;
-        state.set_account(record, unlocked);
+        state.set_account(record, unlocked)?;
         Ok(state.status())
     })
     .await
@@ -162,7 +165,7 @@ pub(crate) async fn unlock(
         if wire::b64(unlocked.session.account_id().as_bytes()) != record.account_id {
             return Err(AppError::Tampered);
         }
-        state.set_unlocked(unlocked);
+        state.set_unlocked(unlocked)?;
         Ok(state.status())
     })
     .await
@@ -173,4 +176,222 @@ pub(crate) async fn unlock(
 pub(crate) fn lock(state: State<'_, AppState>) -> AppStatus {
     state.lock();
     state.status()
+}
+
+fn vault_id(text: &str) -> Result<VaultId, AppError> {
+    wire::unb64_array(text)
+        .map(VaultId::from_bytes)
+        .ok_or(AppError::NotFound)
+}
+
+fn item_id(text: &str) -> Result<ItemId, AppError> {
+    wire::unb64_array(text)
+        .map(ItemId::from_bytes)
+        .ok_or(AppError::NotFound)
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or_default()
+}
+
+/// Syncs every vault with the server and lists them.
+#[tauri::command]
+pub(crate) async fn sync_vaults(app: AppHandle) -> Result<Vec<VaultSummary>, AppError> {
+    blocking(app, move |state| {
+        state.with_session(|s| {
+            s.vaults.sync(&state.transport, &s.unlocked)?;
+            Ok(s.vaults.summaries(&s.unlocked))
+        })
+    })
+    .await
+}
+
+/// Lists a vault's items, sorted by title. Carries no secrets.
+#[tauri::command]
+pub(crate) fn list_items(
+    state: State<'_, AppState>,
+    vault: String,
+) -> Result<Vec<ItemSummary>, AppError> {
+    let id = vault_id(&vault)?;
+    state.with_session(|s| {
+        let mut list: Vec<ItemSummary> = s
+            .vaults
+            .items(&id)?
+            .iter()
+            .map(|(item_id, item)| items::summary(item_id, item))
+            .collect();
+        list.sort_by_key(|i| i.title.to_lowercase());
+        Ok(list)
+    })
+}
+
+/// One item, with concealed values left out.
+#[tauri::command]
+pub(crate) fn get_item(
+    state: State<'_, AppState>,
+    vault: String,
+    item: String,
+) -> Result<ItemView, AppError> {
+    let (id, item_id) = (vault_id(&vault)?, item_id(&item)?);
+    state.with_session(|s| Ok(items::view(&item_id, &s.vaults.item(&id, &item_id)?)))
+}
+
+/// The value of one concealed field, when the user asks to see it.
+#[tauri::command]
+pub(crate) fn reveal_field(
+    state: State<'_, AppState>,
+    vault: String,
+    item: String,
+    index: usize,
+) -> Result<Zeroizing<String>, AppError> {
+    let (id, item_id) = (vault_id(&vault)?, item_id(&item)?);
+    state.with_session(|s| {
+        let item = s.vaults.item(&id, &item_id)?;
+        Ok(items::field_at(&item, index)?.value.clone())
+    })
+}
+
+/// Copies one field to the clipboard from here, so concealed values never
+/// pass through the window. Cleared after 30 seconds.
+#[tauri::command]
+pub(crate) fn copy_field(
+    state: State<'_, AppState>,
+    vault: String,
+    item: String,
+    index: usize,
+) -> Result<(), AppError> {
+    let (id, item_id) = (vault_id(&vault)?, item_id(&item)?);
+    let value = state.with_session(|s| {
+        let item = s.vaults.item(&id, &item_id)?;
+        Ok(items::field_at(&item, index)?.value.clone())
+    })?;
+    state.clipboard.copy(value)
+}
+
+/// Adds an item (no `item`) or saves changes to one. Returns its ID.
+#[tauri::command]
+pub(crate) async fn save_item(
+    app: AppHandle,
+    vault: String,
+    item: Option<String>,
+    input: ItemInput,
+) -> Result<String, AppError> {
+    let id = vault_id(&vault)?;
+    let existing = item.as_deref().map(item_id).transpose()?;
+    blocking(app, move |state| {
+        state.with_session(|s| {
+            let created_ms = match &existing {
+                Some(item_id) => s.vaults.item(&id, item_id)?.created_ms,
+                None => now_ms(),
+            };
+            let built = items::build(&input, created_ms, now_ms())?;
+            let saved = s
+                .vaults
+                .put(&state.transport, &s.unlocked, id, existing, &built)?;
+            Ok(wire::b64(saved.as_bytes()))
+        })
+    })
+    .await
+}
+
+/// Deletes an item.
+#[tauri::command]
+pub(crate) async fn delete_item(
+    app: AppHandle,
+    vault: String,
+    item: String,
+) -> Result<(), AppError> {
+    let (id, item_id) = (vault_id(&vault)?, item_id(&item)?);
+    blocking(app, move |state| {
+        state.with_session(|s| s.vaults.delete(&state.transport, &s.unlocked, id, &item_id))
+    })
+    .await
+}
+
+/// Generates a random password.
+#[tauri::command]
+pub(crate) fn generate_password(options: Options) -> Result<Generated, AppError> {
+    generator::generate(&options)
+}
+
+/// This account's sharing ID, for others to share vaults with it.
+#[tauri::command]
+pub(crate) fn my_sharing_id(state: State<'_, AppState>) -> Result<String, AppError> {
+    state.with_session(|s| Ok(crate::sharing_id::encode(s.unlocked.session.account_id())))
+}
+
+/// The members of a vault.
+#[tauri::command]
+pub(crate) fn vault_members(
+    state: State<'_, AppState>,
+    vault: String,
+) -> Result<Vec<MemberView>, AppError> {
+    let id = vault_id(&vault)?;
+    state.with_session(|s| s.vaults.members(&id, &s.unlocked))
+}
+
+/// Looks someone up by sharing ID and returns the safety number.
+#[tauri::command]
+pub(crate) async fn look_up_member(
+    app: AppHandle,
+    vault: String,
+    sharing_id: String,
+) -> Result<LookedUp, AppError> {
+    let id = vault_id(&vault)?;
+    blocking(app, move |state| {
+        state.with_session(|s| {
+            s.vaults
+                .look_up(&state.transport, &s.unlocked, id, &sharing_id)
+        })
+    })
+    .await
+}
+
+/// Shares a vault with the person just looked up.
+#[tauri::command]
+pub(crate) async fn share_vault(
+    app: AppHandle,
+    vault: String,
+    sharing_id: String,
+    role: String,
+) -> Result<Vec<MemberView>, AppError> {
+    let id = vault_id(&vault)?;
+    let role = match role.as_str() {
+        "editor" => vault_core::log::Role::Editor,
+        "viewer" => vault_core::log::Role::Viewer,
+        _ => return Err(AppError::Internal),
+    };
+    blocking(app, move |state| {
+        state.with_session(|s| {
+            s.vaults
+                .share(&state.transport, &s.unlocked, id, &sharing_id, role)?;
+            s.vaults.members(&id, &s.unlocked)
+        })
+    })
+    .await
+}
+
+/// The safety number with a member, to compare with them.
+#[tauri::command]
+pub(crate) async fn compare_safety_number(
+    app: AppHandle,
+    sharing_id: String,
+) -> Result<LookedUp, AppError> {
+    blocking(app, move |state| {
+        state.with_session(|s| s.vaults.compare(&state.transport, &s.unlocked, &sharing_id))
+    })
+    .await
+}
+
+/// Copies text the window already shows, such as a newly generated
+/// password, with the same protections as copying a field.
+#[tauri::command]
+pub(crate) fn copy_text(
+    state: State<'_, AppState>,
+    text: Zeroizing<String>,
+) -> Result<(), AppError> {
+    state.clipboard.copy(text)
 }

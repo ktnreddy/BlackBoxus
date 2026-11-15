@@ -6,9 +6,20 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use client_core::login::Unlocked;
 use serde::Serialize;
 
+use crate::clipboard::SecretClipboard;
 use crate::error::AppError;
 use crate::http::{Https, ORIGIN};
 use crate::storage::{AccountRecord, Storage};
+use crate::vaults::{VaultFiles, Vaults, log_key};
+
+/// An unlocked account: its session, key set and vaults. Dropping it
+/// erases the keys and decrypted vault keys.
+pub struct Session {
+    /// The signed-in session and key set.
+    pub unlocked: Unlocked,
+    /// The account's vaults.
+    pub vaults: Vaults,
+}
 
 /// The account set up on this computer, as shown in the window.
 #[derive(Debug, Clone, Serialize)]
@@ -33,9 +44,8 @@ pub struct AppStatus {
 #[derive(Default)]
 struct Inner {
     account: Option<AccountRecord>,
-    /// The signed-in session and key set while unlocked. Dropping it
-    /// erases the keys.
-    unlocked: Option<Unlocked>,
+    /// The session while unlocked.
+    session: Option<Session>,
 }
 
 /// Shared app state. Keys live here, never in the window.
@@ -46,6 +56,8 @@ pub struct AppState {
     pub storage: Storage,
     /// How requests reach the server.
     pub transport: Https,
+    /// Copies secrets and clears them again.
+    pub clipboard: SecretClipboard,
 }
 
 impl core::fmt::Debug for AppState {
@@ -72,11 +84,12 @@ impl AppState {
         Self {
             inner: Mutex::new(Inner {
                 account,
-                unlocked: None,
+                session: None,
             }),
             busy: AtomicBool::new(false),
             storage,
             transport,
+            clipboard: SecretClipboard::default(),
         }
     }
 
@@ -107,7 +120,7 @@ impl AppState {
             account: inner.account.as_ref().map(|a| AccountView {
                 email: a.email.clone(),
             }),
-            locked: inner.unlocked.is_none(),
+            locked: inner.session.is_none(),
         }
     }
 
@@ -116,21 +129,56 @@ impl AppState {
         self.inner().account.clone()
     }
 
+    fn session_for(&self, unlocked: Unlocked) -> Result<Session, AppError> {
+        Ok(Session {
+            unlocked,
+            vaults: Vaults::new(VaultFiles::new(self.storage.vault_dir()), log_key()?),
+        })
+    }
+
     /// Records a newly set-up account and unlocks it.
-    pub fn set_account(&self, account: AccountRecord, unlocked: Unlocked) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NotConfigured`] if this build has no log key.
+    pub fn set_account(&self, account: AccountRecord, unlocked: Unlocked) -> Result<(), AppError> {
+        let session = self.session_for(unlocked)?;
         let mut inner = self.inner();
         inner.account = Some(account);
-        inner.unlocked = Some(unlocked);
+        inner.session = Some(session);
+        Ok(())
     }
 
     /// Unlocks with a signed-in session.
-    pub fn set_unlocked(&self, unlocked: Unlocked) {
-        self.inner().unlocked = Some(unlocked);
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NotConfigured`] if this build has no log key.
+    pub fn set_unlocked(&self, unlocked: Unlocked) -> Result<(), AppError> {
+        let session = self.session_for(unlocked)?;
+        self.inner().session = Some(session);
+        Ok(())
     }
 
-    /// Locks the vaults, erasing the keys from memory.
+    /// Runs `f` with the unlocked session.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Locked`] if the vaults are locked, or `f`'s error.
+    pub fn with_session<T>(
+        &self,
+        f: impl FnOnce(&mut Session) -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        let mut inner = self.inner();
+        let session = inner.session.as_mut().ok_or(AppError::Locked)?;
+        f(session)
+    }
+
+    /// Locks the vaults, erasing the keys from memory and any secret left
+    /// on the clipboard.
     pub fn lock(&self) {
-        let unlocked = self.inner().unlocked.take();
-        drop(unlocked);
+        let session = self.inner().session.take();
+        drop(session);
+        self.clipboard.clear_now();
     }
 }

@@ -5,13 +5,18 @@
 //! call the commands in `commands`, and the content security policy in
 //! `tauri.conf.json` stops it loading anything from the network.
 
+mod clipboard;
 mod commands;
 mod error;
 pub mod flows;
+mod generator;
 pub mod http;
+mod items;
+mod sharing_id;
 mod state;
 pub mod storage;
 mod strength;
+pub mod vaults;
 
 use tauri::Manager;
 
@@ -52,6 +57,20 @@ pub fn run() -> Result<(), StartError> {
             commands::sign_in,
             commands::unlock,
             commands::lock,
+            commands::sync_vaults,
+            commands::list_items,
+            commands::get_item,
+            commands::reveal_field,
+            commands::copy_field,
+            commands::save_item,
+            commands::delete_item,
+            commands::generate_password,
+            commands::my_sharing_id,
+            commands::vault_members,
+            commands::look_up_member,
+            commands::share_vault,
+            commands::compare_safety_number,
+            commands::copy_text,
         ])
         .run(tauri::generate_context!())
 }

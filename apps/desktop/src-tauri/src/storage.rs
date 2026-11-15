@@ -81,6 +81,11 @@ impl Storage {
         Self { dir }
     }
 
+    /// Where vault copies are kept.
+    pub fn vault_dir(&self) -> PathBuf {
+        self.dir.join("vaults")
+    }
+
     /// Reads the account record, if there is one.
     ///
     /// # Errors
@@ -139,7 +144,7 @@ fn entry(record: &AccountRecord) -> Result<Entry, AppError> {
 }
 
 /// Writes a file so a crash leaves either the old or the new contents.
-fn write_atomically(dir: &Path, name: &str, contents: &[u8]) -> Result<(), AppError> {
+pub(crate) fn write_atomically(dir: &Path, name: &str, contents: &[u8]) -> Result<(), AppError> {
     fs::create_dir_all(dir).map_err(|_| AppError::Storage)?;
     let tmp = dir.join(format!("{name}.tmp"));
     let mut file = fs::File::create(&tmp).map_err(|_| AppError::Storage)?;

@@ -2,13 +2,29 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
   "description": "What the main window may do: only BlackBoxus's own commands, nothing from Tauri's built-in plugins.",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "allow-app-status",
     "allow-rate-password",
     "allow-create-account",
     "allow-sign-in",
     "allow-unlock",
-    "allow-lock"
+    "allow-lock",
+    "allow-sync-vaults",
+    "allow-list-items",
+    "allow-get-item",
+    "allow-reveal-field",
+    "allow-copy-field",
+    "allow-save-item",
+    "allow-delete-item",
+    "allow-generate-password",
+    "allow-my-sharing-id",
+    "allow-vault-members",
+    "allow-look-up-member",
+    "allow-share-vault",
+    "allow-compare-safety-number",
+    "allow-copy-text"
   ]
 }

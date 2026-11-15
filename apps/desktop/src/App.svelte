@@ -4,7 +4,7 @@
   import SignIn from "./lib/screens/SignIn.svelte";
   import Signup from "./lib/screens/Signup.svelte";
   import Unlock from "./lib/screens/Unlock.svelte";
-  import Unlocked from "./lib/screens/Unlocked.svelte";
+  import Vault from "./lib/screens/Vault.svelte";
   import Welcome from "./lib/screens/Welcome.svelte";
 
   let status = $state<AppStatus | null>(null);
@@ -48,7 +48,7 @@
   {:else if status.locked}
     <Unlock {status} onchange={(s) => (status = s)} />
   {:else}
-    <Unlocked {status} onchange={(s) => (status = s)} />
+    <Vault {status} onchange={(s) => (status = s)} />
   {/if}
 </div>
 

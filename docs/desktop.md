@@ -21,6 +21,8 @@ Windows is the first platform. macOS and Linux builds come later.
 | Email address, account ID, server | `account.json` in the app's data folder | Nothing secret in it |
 | Secret Key | Windows Credential Manager (`BlackBoxus` entry) | Windows encrypts it for the signed-in user |
 | Master password | Nowhere | Typed each time you unlock |
+| Vault copies | `vaults/*.vault` in the app's data folder | Sealed with the account's key set |
+| Last key transparency tree head | `vaults/tree-head.json` | Public; used to catch a log that goes back in time |
 
 The Secret Key alone cannot open anything: unlocking also needs the master
 password. Other programs running as the same Windows user can read
@@ -41,6 +43,57 @@ the master password is not.
 - **Unlock:** signs in with the stored Secret Key and the master password.
   It needs the internet for now; unlocking offline from the local copy
   comes with vault sync.
+
+## Vaults
+
+After unlocking, the app syncs every vault the account can read: it
+downloads new log entries, looks up any new authors through key
+transparency, replays and verifies the whole signed log, then fetches the
+vault keys and items. A new account gets its first vault, "Personal", on
+its first sync. A sealed copy of each vault is saved after every sync and
+loaded on the next one, so a server that rolls a vault back or forks it is
+caught.
+
+- **Items:** logins, secure notes and cards can be added, edited and
+  deleted. Item lists and views never carry concealed values (passwords,
+  card numbers, security codes); the window asks for one only when the
+  eye is clicked, and hides it again after 30 seconds.
+- **Copying** happens in Rust, so concealed values never pass through the
+  window. On Windows the copy is kept out of clipboard history and cloud
+  clipboard sync, and it is cleared after 30 seconds, or on locking, if
+  it is still on the clipboard.
+- **Auto-lock:** after 10 minutes without keyboard or mouse input.
+- **Password generator:** random passwords (8 to 64 characters, letters
+  that look alike left out) or passphrases of 3 to 10 words from the
+  [EFF Large Wordlist](https://www.eff.org/dice) (by the Electronic
+  Frontier Foundation, CC BY 3.0 US), all from the operating system's
+  random number generator without bias. It opens from the sidebar, or
+  from a password field to fill it in.
+
+## Sharing
+
+Vaults are shared by **sharing ID**: the account ID written as 26
+characters, such as `0QKX4Q-SX48Q-J7J8K-HZYQ2-D7Y27`. Each person finds
+theirs on the Share screen. Email addresses are not used, so the server
+never has to say whether an address has an account.
+
+1. The owner enters the other person's sharing ID and looks them up. The
+   app fetches both accounts' keys through key transparency and verifies
+   them.
+2. Both see the same 60-digit safety number (on the other side, under
+   Compare). The owner can share only after ticking that it matches.
+3. The app records the new member in the vault's signed log and sends them
+   the vault key, encrypted to their keys and signed.
+4. On the recipient's next sync, the app checks the sender's signature
+   with keys from key transparency, stores the vault key for this account
+   and syncs the vault. Shares that fail any check are ignored.
+
+Owners can add people as "Can edit" or "Can view". Changing roles and
+removing people come later.
+
+The key transparency log's public key is built into the app from
+`src-tauri/log-key.txt`. It is printed in the Deploy job's summary after
+the server's first deploy; until it is filled in, vaults cannot be synced.
 
 The window never holds keys and never talks to the network. A master
 password is passed to Rust once, cleared from the page straight away and
@@ -94,8 +147,10 @@ Debug builds can talk to a local server (see `docs/deployment.md`) instead
 of the real one; release builds ignore this setting:
 
 ```sh
-BLACKBOXUS_API_URL=http://127.0.0.1:8787 npm run tauri dev
-BLACKBOXUS_API_URL=http://127.0.0.1:8787 cargo test -p blackboxus-desktop -- --ignored
+export BLACKBOXUS_API_URL=http://127.0.0.1:8787
+export BLACKBOXUS_LOG_KEY=<the local server's log key, from generate_secrets>
+npm run tauri dev
+cargo test -p blackboxus-desktop -- --ignored
 ```
 
 On Linux and macOS, debug builds keep the Secret Key in memory only, so it

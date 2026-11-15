@@ -209,6 +209,10 @@ input {
 .field:focus-within {
   border-color: var(--accent);
 }
+input::placeholder,
+textarea::placeholder {
+  color: var(--dim);
+}
 .field input {
   flex: 1;
   min-width: 0;

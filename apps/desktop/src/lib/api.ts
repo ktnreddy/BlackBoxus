@@ -73,3 +73,137 @@ export function createAccount(email: string, password: string, confirm: string):
 export function signIn(email: string, secretKey: string, password: string): Promise<AppStatus> {
   return invoke<AppStatus>("sign_in", { email, secretKey, password });
 }
+
+export interface VaultSummary {
+  id: string;
+  name: string;
+  items: number;
+  writable: boolean;
+}
+
+export type ItemType = "login" | "note" | "card" | "identity" | "api";
+
+export interface ItemSummary {
+  id: string;
+  type: ItemType;
+  title: string;
+  subtitle: string;
+  modified_ms: number;
+}
+
+export interface FieldView {
+  kind: string;
+  label: string;
+  /** Null while the value is concealed. */
+  value: string | null;
+  concealed: boolean;
+}
+
+export interface ItemView {
+  id: string;
+  type: ItemType;
+  title: string;
+  fields: FieldView[];
+  created_ms: number;
+  modified_ms: number;
+}
+
+export interface FieldInput {
+  kind: string;
+  label: string;
+  value: string;
+}
+
+export interface ItemInput {
+  type: ItemType;
+  title: string;
+  fields: FieldInput[];
+}
+
+export function syncVaults(): Promise<VaultSummary[]> {
+  return invoke<VaultSummary[]>("sync_vaults");
+}
+
+export function listItems(vault: string): Promise<ItemSummary[]> {
+  return invoke<ItemSummary[]>("list_items", { vault });
+}
+
+export function getItem(vault: string, item: string): Promise<ItemView> {
+  return invoke<ItemView>("get_item", { vault, item });
+}
+
+export function revealField(vault: string, item: string, index: number): Promise<string> {
+  return invoke<string>("reveal_field", { vault, item, index });
+}
+
+export function copyField(vault: string, item: string, index: number): Promise<void> {
+  return invoke<void>("copy_field", { vault, item, index });
+}
+
+export function saveItem(vault: string, item: string | null, input: ItemInput): Promise<string> {
+  return invoke<string>("save_item", { vault, item, input });
+}
+
+export function deleteItem(vault: string, item: string): Promise<void> {
+  return invoke<void>("delete_item", { vault, item });
+}
+
+export type GeneratorOptions =
+  | { kind: "random"; length: number; digits: boolean; symbols: boolean }
+  | { kind: "passphrase"; words: number; separator: string; capitalise: boolean; number: boolean };
+
+export interface Generated {
+  password: string;
+  bits: number;
+  label: string;
+}
+
+export const DEFAULT_GENERATOR: GeneratorOptions = {
+  kind: "random",
+  length: 20,
+  digits: true,
+  symbols: true,
+};
+
+export function generatePassword(options: GeneratorOptions = DEFAULT_GENERATOR): Promise<Generated> {
+  return invoke<Generated>("generate_password", { options });
+}
+
+export function copyText(text: string): Promise<void> {
+  return invoke<void>("copy_text", { text });
+}
+
+export interface Member {
+  sharing_id: string;
+  role: "owner" | "editor" | "viewer";
+  you: boolean;
+}
+
+export interface LookedUp {
+  sharing_id: string;
+  safety_number: string[];
+}
+
+export function mySharingId(): Promise<string> {
+  return invoke<string>("my_sharing_id");
+}
+
+export function vaultMembers(vault: string): Promise<Member[]> {
+  return invoke<Member[]>("vault_members", { vault });
+}
+
+export function lookUpMember(vault: string, sharingId: string): Promise<LookedUp> {
+  return invoke<LookedUp>("look_up_member", { vault, sharingId });
+}
+
+export function shareVault(
+  vault: string,
+  sharingId: string,
+  role: "editor" | "viewer",
+): Promise<Member[]> {
+  return invoke<Member[]>("share_vault", { vault, sharingId, role });
+}
+
+export function compareSafetyNumber(sharingId: string): Promise<LookedUp> {
+  return invoke<LookedUp>("compare_safety_number", { sharingId });
+}

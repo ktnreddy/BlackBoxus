@@ -69,6 +69,36 @@ pub enum AppError {
     /// Reading or writing this computer's storage failed.
     #[error("BlackBoxus couldn't save to this computer. Check there is free space and try again.")]
     Storage,
+    /// This build does not know the key transparency log's key.
+    #[error("This version of BlackBoxus isn't set up for this server yet. Update the app.")]
+    NotConfigured,
+    /// An item or vault no longer exists.
+    #[error("That item no longer exists. It may have been deleted on another device.")]
+    NotFound,
+    /// The edit form held something invalid.
+    #[error("Give the item a title.")]
+    InvalidItem,
+    /// The vault cannot be changed by this account.
+    #[error("You can only view items in this vault.")]
+    ReadOnly,
+    /// The clipboard could not be used.
+    #[error("Couldn't use the clipboard. Try again.")]
+    Clipboard,
+    /// A sharing ID could not be read.
+    #[error("That isn't a sharing ID. Ask them to copy it from their Share screen.")]
+    InvalidSharingId,
+    /// The person to share with has not been checked.
+    #[error("Look the person up and compare the safety number first.")]
+    NotVerified,
+    /// The person already has access.
+    #[error("They already have access to this vault.")]
+    AlreadyMember,
+    /// Sharing with yourself.
+    #[error("That's your own sharing ID.")]
+    SelfShare,
+    /// The vaults are locked.
+    #[error("Your vaults are locked. Unlock them first.")]
+    Locked,
     /// Another action is still running.
     #[error("Please wait for the last step to finish.")]
     Busy,
@@ -100,6 +130,16 @@ impl AppError {
             Self::Tampered => "tampered",
             Self::SecretKeyMissing => "secret_key_missing",
             Self::Storage => "storage",
+            Self::NotConfigured => "not_configured",
+            Self::NotFound => "not_found",
+            Self::InvalidItem => "invalid_item",
+            Self::ReadOnly => "read_only",
+            Self::Clipboard => "clipboard",
+            Self::Locked => "locked",
+            Self::InvalidSharingId => "invalid_sharing_id",
+            Self::NotVerified => "not_verified",
+            Self::AlreadyMember => "already_member",
+            Self::SelfShare => "self_share",
             Self::Busy => "busy",
             Self::Internal => "internal",
         }
