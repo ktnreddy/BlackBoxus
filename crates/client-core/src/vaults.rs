@@ -79,6 +79,9 @@ pub struct VaultReplica {
     items: BTreeMap<ItemId, StoredItem>,
     items_after: Option<u64>,
     keys: BTreeMap<u32, VaultKey>,
+    /// This account's copies of the vault keys, still wrapped under its key
+    /// set, kept so the local copy can be read offline.
+    wrapped_keys: Vec<Vec<u8>>,
 }
 
 impl core::fmt::Debug for VaultReplica {
@@ -104,6 +107,7 @@ impl VaultReplica {
             items: BTreeMap::new(),
             items_after: None,
             keys: BTreeMap::new(),
+            wrapped_keys: Vec::new(),
         }
     }
 
@@ -221,14 +225,23 @@ impl VaultReplica {
     pub fn receive_keys(&mut self, unlocked: &Unlocked, response: &Response) -> Result<()> {
         let answer: VaultKeysResponse = response.parse()?;
         for wrapped in &answer.keys {
-            let key = VaultKey::unwrap_for_owner(
-                &field(wrapped, OWNER_WRAPPED_VAULT_KEY_LEN)?,
-                &unlocked.key_set,
-                unlocked.session.account_id(),
-                &self.vault_id,
-            )
-            .map_err(|_| ClientError::InvalidResponse)?;
-            self.keys.insert(key.version, key);
+            let wrapped = field(wrapped, OWNER_WRAPPED_VAULT_KEY_LEN)?;
+            self.add_wrapped_key(unlocked, wrapped)?;
+        }
+        Ok(())
+    }
+
+    fn add_wrapped_key(&mut self, unlocked: &Unlocked, wrapped: Vec<u8>) -> Result<()> {
+        let key = VaultKey::unwrap_for_owner(
+            &wrapped,
+            &unlocked.key_set,
+            unlocked.session.account_id(),
+            &self.vault_id,
+        )
+        .map_err(|_| ClientError::InvalidResponse)?;
+        self.keys.insert(key.version, key);
+        if !self.wrapped_keys.contains(&wrapped) {
+            self.wrapped_keys.push(wrapped);
         }
         Ok(())
     }
@@ -535,8 +548,8 @@ impl VaultReplica {
     // -- Local copy ----------------------------------------------------------
 
     /// Encrypts this copy for storage on the device (spec section 6.8). It
-    /// holds signed entries, authors' signed keys and envelopes, never
-    /// decrypted items or vault keys.
+    /// holds signed entries, authors' signed keys, envelopes and this
+    /// account's wrapped vault keys, never decrypted items or vault keys.
     ///
     /// # Errors
     ///
@@ -555,6 +568,7 @@ impl VaultReplica {
                 })
                 .collect(),
             items_after: self.items_after,
+            keys: self.wrapped_keys.iter().map(|k| b64(k)).collect(),
         };
         let json =
             Zeroizing::new(serde_json::to_vec(&saved).map_err(|_| ClientError::InvalidResponse)?);
@@ -567,7 +581,9 @@ impl VaultReplica {
     }
 
     /// Restores a copy saved with [`VaultReplica::save`] and verifies its log
-    /// again, so the device can show the vault while offline.
+    /// again, so the device can show the vault while offline. Only
+    /// `unlocked.key_set` and the account ID are used, so an offline unlock
+    /// works too.
     ///
     /// # Errors
     ///
@@ -608,6 +624,9 @@ impl VaultReplica {
             );
         }
         replica.items_after = saved.items_after;
+        for wrapped in &saved.keys {
+            replica.add_wrapped_key(unlocked, field(wrapped, OWNER_WRAPPED_VAULT_KEY_LEN)?)?;
+        }
         Ok(replica)
     }
 }
@@ -624,6 +643,9 @@ struct Saved {
     authors: Vec<String>,
     items: Vec<SavedItem>,
     items_after: Option<u64>,
+    /// Copies saved before vault keys were kept have none.
+    #[serde(default)]
+    keys: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]

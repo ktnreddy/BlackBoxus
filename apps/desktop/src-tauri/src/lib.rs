@@ -7,9 +7,11 @@
 
 mod clipboard;
 mod commands;
+mod device_unlock;
 mod error;
 pub mod flows;
 mod generator;
+mod hello;
 pub mod http;
 mod import;
 mod importer;
@@ -48,8 +50,9 @@ pub fn run() -> Result<(), StartError> {
             storage::init_secret_store()?;
             let dir = app.path().app_data_dir()?;
             app.manage(state::AppState::new(
-                storage::Storage::new(dir),
+                storage::Storage::new(dir.clone()),
                 http::Https::new(),
+                device_unlock::DeviceUnlock::new(dir, hello::provider()),
             ));
             Ok(())
         })
@@ -78,6 +81,9 @@ pub fn run() -> Result<(), StartError> {
             commands::import_start,
             commands::import_progress,
             commands::import_finish,
+            commands::hello_enable,
+            commands::hello_disable,
+            commands::unlock_with_hello,
         ])
         .run(tauri::generate_context!())
 }

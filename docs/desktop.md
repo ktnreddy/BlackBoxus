@@ -22,6 +22,7 @@ Windows is the first platform. macOS and Linux builds come later.
 | Secret Key | Windows Credential Manager (`BlackBoxus` entry) | Windows encrypts it for the signed-in user |
 | Master password | Nowhere | Typed each time you unlock |
 | Vault copies | `vaults/*.vault` in the app's data folder | Sealed with the account's key set |
+| Offline unlock record | `offline-unlock.json` | The key set wrapped for the master password, as the server keeps it |
 | Last key transparency tree head | `vaults/tree-head.json` | Public; used to catch a log that goes back in time |
 
 The Secret Key alone cannot open anything: unlocking also needs the master
@@ -41,8 +42,10 @@ the master password is not.
   password. The Secret Key is then stored, so later only the master
   password is needed.
 - **Unlock:** signs in with the stored Secret Key and the master password.
-  It needs the internet for now; unlocking offline from the local copy
-  comes with vault sync.
+  Without a connection, it unlocks from the offline unlock record instead
+  and shows the vaults from this computer's copies, read-only (spec
+  section 6.8). When the connection is back, the app asks for the master
+  password once more to sign in and sync.
 
 ## Vaults
 
@@ -69,6 +72,31 @@ caught.
   Frontier Foundation, CC BY 3.0 US), all from the operating system's
   random number generator without bias. It opens from the sidebar, or
   from a password field to fill it in.
+
+## Windows Hello
+
+Settings → "Unlock with Windows Hello" lets the app unlock with a face,
+fingerprint or PIN instead of the master password (spec section 10.4).
+
+- Turning it on asks Windows to create a key credential named after the
+  account. Its RSA key is kept by Windows Hello, in the TPM where there is
+  one, and is used only after the user verifies.
+- The app signs a fixed challenge (`"BlackBoxus v1 windows-hello
+  challenge" ‖ account_id`) with it. RSA signatures with PKCS #1 v1.5
+  padding are deterministic, so the same signature comes back every time;
+  HKDF-SHA-256 turns it into the device key.
+- The key set is wrapped with the device key as unlock method 3, and the
+  current session token is sealed under the key set, so the app can sync
+  after a Hello unlock. Both are stored only in `device-unlock.json` on
+  this computer and never uploaded.
+- The master password is required again after 14 days without it. Every
+  master password unlock restarts the 14 days and stores the new session.
+  If the stored session has expired on the server, the app locks and asks
+  for the master password.
+- Turning it off deletes the file and the Windows key.
+
+Debug builds on Linux can try this with `BLACKBOXUS_FAKE_HELLO=1`, which
+replaces Windows Hello with an in-memory key and no user check.
 
 ## Importing
 

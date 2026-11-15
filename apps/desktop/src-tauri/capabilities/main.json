@@ -29,6 +29,9 @@
     "allow-import-choose-file",
     "allow-import-start",
     "allow-import-progress",
-    "allow-import-finish"
+    "allow-import-finish",
+    "allow-hello-enable",
+    "allow-hello-disable",
+    "allow-unlock-with-hello"
   ]
 }

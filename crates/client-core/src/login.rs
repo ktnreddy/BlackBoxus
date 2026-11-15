@@ -7,14 +7,15 @@
 //!   ─► GET /v1/keyset ─► Unlocking::unlock ─► Unlocked
 //! ```
 
+use serde::{Deserialize, Serialize};
 use vault_core::login::{LoginState, start_login};
 use vault_core::{
     AccountId, AccountKeys, AccountSalt, ClientIdentity, KdfParams, KeySet, MasterPassword,
     SecretKey, ServerIdentity, UnlockMethod, WRAPPED_KEY_SET_LEN, derive_account_keys,
 };
 use wire::{
-    KeySetResponse, LoginFinishRequest, LoginStartRequest, LoginStartResponse, PreloginRequest,
-    PreloginResponse, b64,
+    KdfJson, KeySetResponse, LoginFinishRequest, LoginStartRequest, LoginStartResponse,
+    PreloginRequest, PreloginResponse, b64,
 };
 
 use crate::http::{Method, Request, Response, Session, field, field_array};
@@ -89,6 +90,8 @@ impl Login {
                 server: self.server,
                 keys,
                 state,
+                salt,
+                kdf,
             },
             request,
         ))
@@ -101,6 +104,8 @@ pub struct LoginStarted {
     server: ServerIdentity,
     keys: AccountKeys,
     state: LoginState,
+    salt: AccountSalt,
+    kdf: KdfParams,
 }
 
 impl core::fmt::Debug for LoginStarted {
@@ -143,6 +148,8 @@ impl LoginStarted {
             LoginFinishing {
                 keys: self.keys,
                 token: finish.session_token,
+                salt: self.salt,
+                kdf: self.kdf,
             },
             request,
         ))
@@ -153,6 +160,8 @@ impl LoginStarted {
 pub struct LoginFinishing {
     keys: AccountKeys,
     token: vault_core::login::SessionToken,
+    salt: AccountSalt,
+    kdf: KdfParams,
 }
 
 impl core::fmt::Debug for LoginFinishing {
@@ -184,6 +193,8 @@ impl LoginFinishing {
             Unlocking {
                 keys: self.keys,
                 token: self.token,
+                salt: self.salt,
+                kdf: self.kdf,
             },
             request,
         ))
@@ -194,6 +205,8 @@ impl LoginFinishing {
 pub struct Unlocking {
     keys: AccountKeys,
     token: vault_core::login::SessionToken,
+    salt: AccountSalt,
+    kdf: KdfParams,
 }
 
 impl core::fmt::Debug for Unlocking {
@@ -212,6 +225,17 @@ impl Unlocking {
     /// Returns [`ClientError::InvalidResponse`] if the key set does not
     /// decrypt, or a server error.
     pub fn unlock(self, response: &Response) -> Result<Unlocked> {
+        self.unlock_keeping_record(response)
+            .map(|(unlocked, _)| unlocked)
+    }
+
+    /// Like [`Unlocking::unlock`], and also returns an [`OfflineRecord`] for
+    /// unlocking on this device later without the server.
+    ///
+    /// # Errors
+    ///
+    /// As [`Unlocking::unlock`].
+    pub fn unlock_keeping_record(self, response: &Response) -> Result<(Unlocked, OfflineRecord)> {
         let answer: KeySetResponse = response.parse()?;
         let account_id = AccountId::from_bytes(field_array(&answer.account_id)?);
         let wrapped = answer
@@ -219,8 +243,9 @@ impl Unlocking {
             .iter()
             .find(|w| w.method == UnlockMethod::MasterPassword.code())
             .ok_or(ClientError::InvalidResponse)?;
+        let wrapped = field(&wrapped.data, WRAPPED_KEY_SET_LEN)?;
         let (key_set, key_set_version) = KeySet::unwrap(
-            &field(&wrapped.data, WRAPPED_KEY_SET_LEN)?,
+            &wrapped,
             &self.keys.account_unlock_key,
             &account_id,
             UnlockMethod::MasterPassword,
@@ -230,8 +255,130 @@ impl Unlocking {
         if key_set_version != answer.key_set_version {
             return Err(ClientError::InvalidResponse);
         }
-        Ok(Unlocked {
-            session: Session::new(self.token, account_id),
+        let record = OfflineRecord {
+            account_id,
+            salt: self.salt,
+            kdf: self.kdf,
+            wrapped,
+        };
+        Ok((
+            Unlocked {
+                session: Session::new(self.token, account_id),
+                key_set,
+                key_set_version,
+            },
+            record,
+        ))
+    }
+}
+
+/// What a device keeps to unlock without the server (spec section 6.8):
+/// the account's salt and KDF parameters and its key set wrapped for the
+/// master password, exactly as the server sent them. It holds nothing
+/// readable without the master password and the Secret Key.
+#[derive(Clone)]
+pub struct OfflineRecord {
+    account_id: AccountId,
+    salt: AccountSalt,
+    kdf: KdfParams,
+    wrapped: Vec<u8>,
+}
+
+impl core::fmt::Debug for OfflineRecord {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("OfflineRecord")
+            .field("account_id", &self.account_id)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OfflineJson {
+    account_id: String,
+    salt: String,
+    kdf: KdfJson,
+    wrapped: String,
+}
+
+/// The key set unlocked from an [`OfflineRecord`], without a session.
+pub struct OfflineUnlocked {
+    /// The account.
+    pub account_id: AccountId,
+    /// The account's key set.
+    pub key_set: KeySet,
+    /// Its version.
+    pub key_set_version: u32,
+}
+
+impl core::fmt::Debug for OfflineUnlocked {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("OfflineUnlocked")
+            .field("account_id", &self.account_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl OfflineRecord {
+    /// The account it unlocks.
+    #[must_use]
+    pub const fn account_id(&self) -> &AccountId {
+        &self.account_id
+    }
+
+    /// The record as JSON, for local storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::InvalidResponse`] if encoding fails.
+    pub fn to_json(&self) -> Result<String> {
+        serde_json::to_string(&OfflineJson {
+            account_id: b64(self.account_id.as_bytes()),
+            salt: b64(self.salt.as_bytes()),
+            kdf: self.kdf.into(),
+            wrapped: b64(&self.wrapped),
+        })
+        .map_err(|_| ClientError::InvalidResponse)
+    }
+
+    /// Reads a record saved with [`OfflineRecord::to_json`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::InvalidResponse`] if it is malformed.
+    pub fn from_json(json: &str) -> Result<Self> {
+        let r: OfflineJson =
+            serde_json::from_str(json).map_err(|_| ClientError::InvalidResponse)?;
+        Ok(Self {
+            account_id: AccountId::from_bytes(field_array(&r.account_id)?),
+            salt: AccountSalt::from_bytes(field_array(&r.salt)?),
+            kdf: KdfParams::from(r.kdf),
+            wrapped: field(&r.wrapped, WRAPPED_KEY_SET_LEN)?,
+        })
+    }
+
+    /// Unlocks the key set on this device. The KDF parameters are checked
+    /// against the same bounds as at login, so a tampered record cannot
+    /// weaken the derivation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::WrongCredentials`] if the password or Secret
+    /// Key is wrong (or the record was tampered with), or
+    /// [`ClientError::Crypto`] for parameters out of bounds.
+    pub fn unlock(&self, password: &str, secret_key: &SecretKey) -> Result<OfflineUnlocked> {
+        let password = MasterPassword::new(password)?;
+        let keys = derive_account_keys(&password, secret_key, &self.salt, &self.kdf)?;
+        let (key_set, key_set_version) = KeySet::unwrap(
+            &self.wrapped,
+            &keys.account_unlock_key,
+            &self.account_id,
+            UnlockMethod::MasterPassword,
+            1,
+        )
+        .map_err(|_| ClientError::WrongCredentials)?;
+        Ok(OfflineUnlocked {
+            account_id: self.account_id,
             key_set,
             key_set_version,
         })

@@ -91,11 +91,12 @@ pub(crate) async fn create_account(
             return Err(AppError::WeakPassword);
         }
         let server = server()?;
-        let (unlocked, secret_key, kit) =
+        let (unlocked, offline, secret_key, kit) =
             flows::create_account(&state.transport, &server, &email, &password)?;
         let identity = ClientIdentity::new(&email)?;
         let record = AccountRecord::new(&identity, unlocked.session.account_id(), ORIGIN);
         state.storage.save_account(&record, &secret_key)?;
+        state.storage.save_offline(&offline)?;
         state.set_account(record, unlocked)?;
         Ok(Created {
             status: state.status(),
@@ -127,10 +128,11 @@ pub(crate) async fn sign_in(
         }
         let identity = ClientIdentity::new(&email)?;
         let secret_key = SecretKey::parse(&secret_key)?;
-        let unlocked =
+        let (unlocked, offline) =
             flows::sign_in(&state.transport, &server()?, &email, &secret_key, &password)?;
         let record = AccountRecord::new(&identity, unlocked.session.account_id(), ORIGIN);
         state.storage.save_account(&record, &secret_key)?;
+        state.storage.save_offline(&offline)?;
         state.set_account(record, unlocked)?;
         Ok(state.status())
     })
@@ -149,22 +151,51 @@ pub(crate) async fn unlock(
         }
         let record = state.account().ok_or(AppError::NoAccount)?;
         let secret_key = state.storage.secret_key(&record)?;
-        let unlocked = flows::sign_in(
+        let online = flows::sign_in(
             &state.transport,
             &server()?,
             &record.email,
             &secret_key,
             &password,
-        )
-        .map_err(|e| match e {
+        );
+        let unlocked = match online {
+            Ok((unlocked, offline)) => {
+                if wire::b64(unlocked.session.account_id().as_bytes()) != record.account_id {
+                    return Err(AppError::Tampered);
+                }
+                state.storage.save_offline(&offline)?;
+                state
+                    .device
+                    .password_used(&unlocked, crate::state::now_ms())?;
+                unlocked
+            }
+            // No connection: unlock from the copy kept on this computer,
+            // read-only until the next sync reaches the server.
+            Err(AppError::Offline) => {
+                let saved = state.storage.load_offline()?.ok_or(AppError::Offline)?;
+                let opened = saved.unlock(&password, &secret_key).map_err(|e| match e {
+                    client_core::ClientError::WrongCredentials => AppError::WrongPassword,
+                    other => other.into(),
+                })?;
+                if wire::b64(opened.account_id.as_bytes()) != record.account_id {
+                    return Err(AppError::Tampered);
+                }
+                client_core::login::Unlocked {
+                    // No session: every request would fail, and none is
+                    // made while offline.
+                    session: client_core::Session::restore(
+                        vault_core::login::SessionToken::from_bytes([0; 32]),
+                        opened.account_id,
+                    ),
+                    key_set: opened.key_set,
+                    key_set_version: opened.key_set_version,
+                }
+            }
             // Only the password can be wrong: the email and Secret Key
             // were stored when this computer was set up.
-            AppError::WrongCredentials => AppError::WrongPassword,
-            other => other,
-        })?;
-        if wire::b64(unlocked.session.account_id().as_bytes()) != record.account_id {
-            return Err(AppError::Tampered);
-        }
+            Err(AppError::WrongCredentials) => return Err(AppError::WrongPassword),
+            Err(other) => return Err(other),
+        };
         state.set_unlocked(unlocked)?;
         Ok(state.status())
     })
@@ -197,13 +228,34 @@ fn now_ms() -> u64 {
         .unwrap_or_default()
 }
 
-/// Syncs every vault with the server and lists them.
+/// What [`sync_vaults`] returns.
+#[derive(Debug, Serialize)]
+pub(crate) struct Synced {
+    vaults: Vec<VaultSummary>,
+    /// The server could not be reached: these are this computer's copies.
+    offline: bool,
+}
+
+/// Syncs every vault with the server and lists them. Without a connection,
+/// lists this computer's copies instead, read-only.
 #[tauri::command]
-pub(crate) async fn sync_vaults(app: AppHandle) -> Result<Vec<VaultSummary>, AppError> {
+pub(crate) async fn sync_vaults(app: AppHandle) -> Result<Synced, AppError> {
     blocking(app, move |state| {
+        let offline =
+            state.with_session(|s| match s.vaults.sync(&state.transport, &s.unlocked) {
+                Ok(()) => Ok(false),
+                Err(AppError::Offline) => {
+                    s.vaults.load_local(&s.unlocked);
+                    Ok(true)
+                }
+                Err(e) => Err(e),
+            })?;
+        state.set_offline(offline);
         state.with_session(|s| {
-            s.vaults.sync(&state.transport, &s.unlocked)?;
-            Ok(s.vaults.summaries(&s.unlocked))
+            Ok(Synced {
+                vaults: s.vaults.summaries(&s.unlocked),
+                offline,
+            })
         })
     })
     .await
@@ -282,6 +334,7 @@ pub(crate) async fn save_item(
     let id = vault_id(&vault)?;
     let existing = item.as_deref().map(item_id).transpose()?;
     blocking(app, move |state| {
+        state.require_online()?;
         state.with_session(|s| {
             let created_ms = match &existing {
                 Some(item_id) => s.vaults.item(&id, item_id)?.created_ms,
@@ -306,6 +359,7 @@ pub(crate) async fn delete_item(
 ) -> Result<(), AppError> {
     let (id, item_id) = (vault_id(&vault)?, item_id(&item)?);
     blocking(app, move |state| {
+        state.require_online()?;
         state.with_session(|s| s.vaults.delete(&state.transport, &s.unlocked, id, &item_id))
     })
     .await
@@ -342,6 +396,7 @@ pub(crate) async fn look_up_member(
 ) -> Result<LookedUp, AppError> {
     let id = vault_id(&vault)?;
     blocking(app, move |state| {
+        state.require_online()?;
         state.with_session(|s| {
             s.vaults
                 .look_up(&state.transport, &s.unlocked, id, &sharing_id)
@@ -365,6 +420,7 @@ pub(crate) async fn share_vault(
         _ => return Err(AppError::Internal),
     };
     blocking(app, move |state| {
+        state.require_online()?;
         state.with_session(|s| {
             s.vaults
                 .share(&state.transport, &s.unlocked, id, &sharing_id, role)?;
@@ -458,6 +514,7 @@ pub(crate) fn import_start(
     vault: String,
 ) -> Result<(), AppError> {
     let id = vault_id(&vault)?;
+    state.require_online()?;
     let items = state.with_session(|s| {
         let pending = s.pending_import.as_mut().ok_or(AppError::NotFound)?;
         Ok(std::mem::take(&mut pending.items))
@@ -485,4 +542,42 @@ pub(crate) fn import_finish(state: State<'_, AppState>, delete_file: bool) -> Re
         std::fs::remove_file(&p.path).map_err(|_| AppError::Storage)?;
     }
     Ok(())
+}
+
+fn account_of(state: &AppState) -> Result<vault_core::AccountId, AppError> {
+    let record = state.account().ok_or(AppError::NoAccount)?;
+    wire::unb64_array(&record.account_id)
+        .map(vault_core::AccountId::from_bytes)
+        .ok_or(AppError::Storage)
+}
+
+/// Turns on unlocking with Windows Hello. Windows asks the user to verify.
+#[tauri::command]
+pub(crate) async fn hello_enable(app: AppHandle) -> Result<AppStatus, AppError> {
+    blocking(app, move |state| {
+        // An offline unlock has no session to keep for Hello unlocks.
+        state.require_online()?;
+        state.with_session(|s| state.device.enable(&s.unlocked, crate::state::now_ms()))?;
+        Ok(state.status())
+    })
+    .await
+}
+
+/// Turns off unlocking with Windows Hello and deletes its key.
+#[tauri::command]
+pub(crate) fn hello_disable(state: State<'_, AppState>) -> Result<AppStatus, AppError> {
+    state.device.disable(&account_of(&state)?)?;
+    Ok(state.status())
+}
+
+/// Unlocks with Windows Hello. Windows asks the user to verify.
+#[tauri::command]
+pub(crate) async fn unlock_with_hello(app: AppHandle) -> Result<AppStatus, AppError> {
+    blocking(app, move |state| {
+        let account = account_of(state)?;
+        let unlocked = state.device.unlock(&account, crate::state::now_ms())?;
+        state.set_unlocked(unlocked)?;
+        Ok(state.status())
+    })
+    .await
 }

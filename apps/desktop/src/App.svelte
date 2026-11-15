@@ -13,6 +13,8 @@
   let firstRun = $state<"welcome" | "signup" | "signin">("welcome");
   /** The Emergency Kit, held only until the user confirms they saved it. */
   let kit = $state<Kit | null>(null);
+  /** Why the vaults were locked, shown on the unlock screen. */
+  let lockNotice = $state("");
 
   appStatus().then(
     (s) => (status = s),
@@ -46,9 +48,22 @@
       />
     {/if}
   {:else if status.locked}
-    <Unlock {status} onchange={(s) => (status = s)} />
+    <Unlock
+      {status}
+      notice={lockNotice}
+      onchange={(s) => {
+        lockNotice = "";
+        status = s;
+      }}
+    />
   {:else}
-    <Vault {status} onchange={(s) => (status = s)} />
+    <Vault
+      {status}
+      onchange={(s, why) => {
+        lockNotice = why ?? "";
+        status = s;
+      }}
+    />
   {/if}
 </div>
 

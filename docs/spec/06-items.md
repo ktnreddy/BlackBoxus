@@ -124,7 +124,7 @@ Because the header values are bound into both associated-data strings, editing a
 
 ## 6.8 Local copy
 
-Clients keep an encrypted copy of each vault on the device, so it can be read offline and while the server is unavailable. The copy holds what the server sent: signed log entries, the authors' signed key bundles and item envelopes. It never holds decrypted items or vault keys.
+Clients keep an encrypted copy of each vault on the device, so it can be read offline and while the server is unavailable. The copy holds what the server sent: signed log entries, the authors' signed key bundles, item envelopes and this account's copies of the vault keys, still wrapped under its key set (Section 7). It never holds decrypted items or vault keys.
 
 ```
 key    = HKDF-SHA-256(salt = account_id, IKM = account_key,
@@ -134,3 +134,5 @@ sealed = nonce ‖ XChaCha20-Poly1305(key, nonce, copy, aad)
 ```
 
 `account_key` is the key set's account key (Section 5.1), so the copy can only be read while the account is unlocked. Binding the vault ID stops one vault's copy being swapped for another's. When a copy is loaded, its log is verified again (Section 8.4) before anything in it is used.
+
+To unlock without the server, a client MAY also keep the account's salt and KDF parameters from `prelogin` and its key set wrapped for the master password (method 1, Section 5.4), exactly as received. Unlocking offline derives the Account Unlock Key as in Section 3.4, checking the KDF parameters against the same bounds as at login, and unwraps the key set. Someone holding this record and the device's Secret Key can test master password guesses offline at the cost of Argon2id per guess; this is the same exposure as any password manager that unlocks offline, and is why the Secret Key lives in the platform's secure storage. While unlocked offline, the client has no session: it MUST treat vaults as read-only and MUST sign in again with the master password before syncing.

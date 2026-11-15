@@ -8,6 +8,8 @@ export interface AppStatus {
   /** The account set up on this computer, if any. */
   account: { email: string } | null;
   locked: boolean;
+  offline: boolean;
+  hello: { available: boolean; enabled: boolean; needs_password: boolean };
 }
 
 /** An error from the Rust side, safe to show to the user. */
@@ -120,8 +122,8 @@ export interface ItemInput {
   fields: FieldInput[];
 }
 
-export function syncVaults(): Promise<VaultSummary[]> {
-  return invoke<VaultSummary[]>("sync_vaults");
+export function syncVaults(): Promise<{ vaults: VaultSummary[]; offline: boolean }> {
+  return invoke("sync_vaults");
 }
 
 export function listItems(vault: string): Promise<ItemSummary[]> {
@@ -239,4 +241,16 @@ export function importProgress(): Promise<ImportProgress> {
 
 export function importFinish(deleteFile: boolean): Promise<void> {
   return invoke<void>("import_finish", { deleteFile });
+}
+
+export function helloEnable(): Promise<AppStatus> {
+  return invoke<AppStatus>("hello_enable");
+}
+
+export function helloDisable(): Promise<AppStatus> {
+  return invoke<AppStatus>("hello_disable");
+}
+
+export function unlockWithHello(): Promise<AppStatus> {
+  return invoke<AppStatus>("unlock_with_hello");
 }

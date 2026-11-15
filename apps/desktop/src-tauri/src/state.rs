@@ -7,6 +7,7 @@ use client_core::login::Unlocked;
 use serde::Serialize;
 
 use crate::clipboard::SecretClipboard;
+use crate::device_unlock::{DeviceUnlock, HelloStatus};
 use crate::error::AppError;
 use crate::http::{Https, ORIGIN};
 use crate::importer::{ImportStatus, PendingImport};
@@ -42,6 +43,10 @@ pub struct AppStatus {
     pub account: Option<AccountView>,
     /// Whether the vaults are locked.
     pub locked: bool,
+    /// Whether the vaults are shown read-only from this computer's copy.
+    pub offline: bool,
+    /// Windows Hello unlock.
+    pub hello: HelloStatus,
 }
 
 #[derive(Default)]
@@ -49,6 +54,9 @@ struct Inner {
     account: Option<AccountRecord>,
     /// The session while unlocked.
     session: Option<Session>,
+    /// The vaults are shown from this computer's copy because the server
+    /// could not be reached; they are read-only until a sync succeeds.
+    offline: bool,
 }
 
 /// Shared app state. Keys live here, never in the window.
@@ -63,6 +71,8 @@ pub struct AppState {
     pub clipboard: SecretClipboard,
     /// Progress of the running import.
     pub import: ImportStatus,
+    /// Windows Hello unlock.
+    pub device: DeviceUnlock,
 }
 
 impl core::fmt::Debug for AppState {
@@ -84,18 +94,20 @@ impl Drop for BusyGuard<'_> {
 impl AppState {
     /// State for an app keeping its files in `storage`. A damaged account
     /// record is treated as no account, so the user can sign in again.
-    pub fn new(storage: Storage, transport: Https) -> Self {
+    pub fn new(storage: Storage, transport: Https, device: DeviceUnlock) -> Self {
         let account = storage.load_account().ok().flatten();
         Self {
             inner: Mutex::new(Inner {
                 account,
                 session: None,
+                offline: false,
             }),
             busy: AtomicBool::new(false),
             storage,
             transport,
             clipboard: SecretClipboard::default(),
             import: ImportStatus::default(),
+            device,
         }
     }
 
@@ -120,6 +132,11 @@ impl AppState {
     /// The status to show in the window.
     pub fn status(&self) -> AppStatus {
         let inner = self.inner();
+        let account_id = inner
+            .account
+            .as_ref()
+            .and_then(|a| wire::unb64_array(&a.account_id))
+            .map(vault_core::AccountId::from_bytes);
         AppStatus {
             version: env!("CARGO_PKG_VERSION"),
             server: ORIGIN.trim_start_matches("https://"),
@@ -127,6 +144,8 @@ impl AppState {
                 email: a.email.clone(),
             }),
             locked: inner.session.is_none(),
+            offline: inner.offline,
+            hello: self.device.status(account_id.as_ref(), now_ms()),
         }
     }
 
@@ -163,8 +182,29 @@ impl AppState {
     /// Returns [`AppError::NotConfigured`] if this build has no log key.
     pub fn set_unlocked(&self, unlocked: Unlocked) -> Result<(), AppError> {
         let session = self.session_for(unlocked)?;
-        self.inner().session = Some(session);
+        let mut inner = self.inner();
+        inner.session = Some(session);
+        inner.offline = false;
         Ok(())
+    }
+
+    /// Records whether the last sync reached the server.
+    pub fn set_offline(&self, offline: bool) {
+        self.inner().offline = offline;
+    }
+
+    /// Fails with [`AppError::ReadOnlyOffline`] while offline, before any
+    /// change is attempted.
+    ///
+    /// # Errors
+    ///
+    /// As described.
+    pub fn require_online(&self) -> Result<(), AppError> {
+        if self.inner().offline {
+            Err(AppError::ReadOnlyOffline)
+        } else {
+            Ok(())
+        }
     }
 
     /// Runs `f` with the unlocked session.
@@ -184,8 +224,20 @@ impl AppState {
     /// Locks the vaults, erasing the keys from memory and any secret left
     /// on the clipboard.
     pub fn lock(&self) {
-        let session = self.inner().session.take();
+        let session = {
+            let mut inner = self.inner();
+            inner.offline = false;
+            inner.session.take()
+        };
         drop(session);
         self.clipboard.clear_now();
     }
+}
+
+/// The time, Unix milliseconds.
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or_default()
 }

@@ -124,6 +124,20 @@ impl Session {
         Self { token, account_id }
     }
 
+    /// Restores a session whose token was kept in secure local storage, so
+    /// a device-key unlock can sync without the master password (spec
+    /// section 10.4). The server still decides whether it has expired.
+    #[must_use]
+    pub const fn restore(token: SessionToken, account_id: AccountId) -> Self {
+        Self { token, account_id }
+    }
+
+    /// The session token, to keep in secure local storage. Never log it.
+    #[must_use]
+    pub const fn token(&self) -> &SessionToken {
+        &self.token
+    }
+
     /// The signed-in account.
     #[must_use]
     pub const fn account_id(&self) -> &AccountId {

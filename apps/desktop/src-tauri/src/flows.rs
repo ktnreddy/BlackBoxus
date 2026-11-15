@@ -3,7 +3,7 @@
 //! Each runs on a worker thread, because key derivation takes a second or
 //! two on purpose.
 
-use client_core::login::{Login, Unlocked};
+use client_core::login::{Login, OfflineRecord, Unlocked};
 use client_core::signup::{EmergencyKit, Signup};
 use vault_core::{KdfParams, SecretKey, ServerIdentity};
 
@@ -22,20 +22,21 @@ pub fn create_account(
     server: &ServerIdentity,
     email: &str,
     password: &str,
-) -> Result<(Unlocked, SecretKey, EmergencyKit), AppError> {
+) -> Result<(Unlocked, OfflineRecord, SecretKey, EmergencyKit), AppError> {
     let (signup, request) = Signup::start(email, password, server, KdfParams::DEFAULT)?;
     let (pending, request) = signup.register(&transport.send(&request)?)?;
     let account = pending.complete(&transport.send(&request)?)?;
     let kit = account.emergency_kit();
-    let unlocked = sign_in(transport, server, email, &account.secret_key, password)?;
+    let (unlocked, record) = sign_in(transport, server, email, &account.secret_key, password)?;
     // The account the server signed us in to must be the one just created.
     if unlocked.session.account_id() != &account.account_id {
         return Err(AppError::Tampered);
     }
-    Ok((unlocked, account.secret_key, kit))
+    Ok((unlocked, record, account.secret_key, kit))
 }
 
-/// Signs in with an email address, Secret Key and master password.
+/// Signs in with an email address, Secret Key and master password. Also
+/// returns the record for unlocking offline later.
 ///
 /// # Errors
 ///
@@ -47,10 +48,10 @@ pub fn sign_in(
     email: &str,
     secret_key: &SecretKey,
     password: &str,
-) -> Result<Unlocked, AppError> {
+) -> Result<(Unlocked, OfflineRecord), AppError> {
     let (login, request) = Login::start(email, server)?;
     let (login, request) = login.prelogin(&transport.send(&request)?, password, secret_key)?;
     let (login, request) = login.key_exchange(&transport.send(&request)?)?;
     let (login, request) = login.finished(&transport.send(&request)?)?;
-    Ok(login.unlock(&transport.send(&request)?)?)
+    Ok(login.unlock_keeping_record(&transport.send(&request)?)?)
 }

@@ -516,6 +516,36 @@ impl Vaults {
         Ok(list)
     }
 
+    /// Loads the vaults from this computer's copies, without the server.
+    /// Copies that no longer open are left out.
+    pub fn load_local(&mut self, unlocked: &Unlocked) {
+        let Ok(dir) = fs::read_dir(&self.files.dir) else {
+            return;
+        };
+        let mut ids: Vec<VaultId> = dir
+            .filter_map(Result::ok)
+            .filter_map(|e| {
+                let name = e.file_name().into_string().ok()?;
+                let id = name.strip_suffix(".vault")?;
+                wire::unb64_array(id).map(VaultId::from_bytes)
+            })
+            .collect();
+        ids.sort_by_key(|id| *id.as_bytes());
+        for id in &ids {
+            if !self.replicas.contains_key(id)
+                && let Some(replica) = self.files.load(*id, unlocked)
+            {
+                self.replicas.insert(*id, replica);
+            }
+        }
+        if self.order.is_empty() {
+            self.order = ids
+                .into_iter()
+                .filter(|id| self.replicas.contains_key(id))
+                .collect();
+        }
+    }
+
     /// The vaults, for the window.
     pub fn summaries(&self, unlocked: &Unlocked) -> Vec<VaultSummary> {
         let me = unlocked.session.account_id();

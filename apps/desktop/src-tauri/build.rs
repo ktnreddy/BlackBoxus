@@ -28,6 +28,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "import_start",
             "import_progress",
             "import_finish",
+            "hello_enable",
+            "hello_disable",
+            "unlock_with_hello",
         ]),
     ))?;
     Ok(())

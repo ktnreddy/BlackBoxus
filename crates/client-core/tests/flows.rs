@@ -778,6 +778,48 @@ fn create_write_sync_and_keep_a_local_copy() {
 }
 
 #[test]
+fn offline_unlock_and_an_offline_local_copy() {
+    use client_core::Session;
+    use client_core::login::OfflineRecord;
+    use vault_core::login::SessionToken;
+
+    let mut server = Server::new();
+    let alice = sign_up(&mut server, "alice@example.com");
+    let (login, req) = Login::start("alice@example.com", &server_id()).unwrap();
+    let (started, req) = login
+        .prelogin(&server.send(&req), PASSWORD, &alice.secret_key)
+        .unwrap();
+    let (finishing, req) = started.key_exchange(&server.send(&req)).unwrap();
+    let (unlocking, req) = finishing.finished(&server.send(&req)).unwrap();
+    let (unlocked, record) = unlocking.unlock_keeping_record(&server.send(&req)).unwrap();
+    let mut vault = new_vault(&mut server, &unlocked);
+    let (_, req) = vault
+        .put_item(&unlocked, None, &login_item("bank", "b4nk"), 2)
+        .unwrap();
+    written(&server.send(&req)).unwrap();
+    sync(&mut server, &mut vault, &unlocked).unwrap();
+    let saved = vault.save(&unlocked).unwrap();
+
+    // Later, with no server: the record and the local copy are enough.
+    let record = OfflineRecord::from_json(&record.to_json().unwrap()).unwrap();
+    assert_eq!(
+        record
+            .unlock("wrong password", &alice.secret_key)
+            .unwrap_err(),
+        ClientError::WrongCredentials
+    );
+    let offline = record.unlock(PASSWORD, &alice.secret_key).unwrap();
+    assert_eq!(offline.account_id, alice.account_id);
+    let without_session = Unlocked {
+        session: Session::restore(SessionToken::from_bytes([0; 32]), offline.account_id),
+        key_set: offline.key_set,
+        key_set_version: offline.key_set_version,
+    };
+    let restored = VaultReplica::load(*vault.vault_id(), &without_session, &saved).unwrap();
+    assert_eq!(titles(&restored), ["bank"]);
+}
+
+#[test]
 fn a_batch_of_new_items_verifies_in_one_sync() {
     let mut server = Server::new();
     let alice = sign_up(&mut server, "alice@example.com");

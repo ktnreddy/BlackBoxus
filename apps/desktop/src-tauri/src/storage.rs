@@ -18,6 +18,7 @@ use zeroize::Zeroizing;
 use crate::error::AppError;
 
 const ACCOUNT_FILE: &str = "account.json";
+const OFFLINE_FILE: &str = "offline-unlock.json";
 const SERVICE: &str = "BlackBoxus";
 const FORMAT: u32 = 1;
 
@@ -121,6 +122,31 @@ impl Storage {
             .map_err(|_| AppError::Storage)?;
         let json = serde_json::to_vec_pretty(record).map_err(|_| AppError::Storage)?;
         write_atomically(&self.dir, ACCOUNT_FILE, &json)
+    }
+
+    /// Saves what is needed to unlock without the server.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Storage`] if it cannot be written.
+    pub fn save_offline(&self, record: &client_core::login::OfflineRecord) -> Result<(), AppError> {
+        let json = record.to_json().map_err(|_| AppError::Storage)?;
+        write_atomically(&self.dir, OFFLINE_FILE, json.as_bytes())
+    }
+
+    /// Reads the record for unlocking without the server, if there is one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Storage`] if it exists but cannot be read.
+    pub fn load_offline(&self) -> Result<Option<client_core::login::OfflineRecord>, AppError> {
+        match fs::read_to_string(self.dir.join(OFFLINE_FILE)) {
+            Ok(text) => client_core::login::OfflineRecord::from_json(&text)
+                .map(Some)
+                .map_err(|_| AppError::Storage),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(_) => Err(AppError::Storage),
+        }
     }
 
     /// Reads the account's Secret Key.

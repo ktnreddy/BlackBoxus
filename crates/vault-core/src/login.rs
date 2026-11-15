@@ -79,6 +79,13 @@ impl SessionToken {
         Ok(token)
     }
 
+    /// Restores a token that the client kept in secure local storage, for
+    /// example sealed under a device key (spec section 10.4).
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; SESSION_TOKEN_LEN]) -> Self {
+        Self(bytes)
+    }
+
     /// The token bytes, for use as a bearer token.
     #[must_use]
     pub const fn as_bytes(&self) -> &[u8; SESSION_TOKEN_LEN] {

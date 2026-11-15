@@ -105,6 +105,32 @@ pub enum AppError {
     /// An import is already running.
     #[error("An import is already running.")]
     ImportRunning,
+    /// Windows Hello is not set up or not available.
+    #[error(
+        "Windows Hello isn't available. Set it up in Windows Settings, under Accounts, Sign-in options."
+    )]
+    HelloUnavailable,
+    /// The user cancelled Windows Hello.
+    #[error("Windows Hello was cancelled.")]
+    HelloCancelled,
+    /// The Hello key is gone, for example after a Windows reset.
+    #[error(
+        "Windows Hello unlock needs setting up again. Unlock with your master password, then turn it back on."
+    )]
+    HelloMissing,
+    /// Hello unlock is not turned on.
+    #[error("Windows Hello unlock is off. Unlock with your master password.")]
+    HelloOff,
+    /// It has been too long since the master password was used.
+    #[error(
+        "It's been 14 days, so enter your master password this time. Windows Hello works again after that."
+    )]
+    PasswordNeeded,
+    /// A change was attempted while offline.
+    #[error(
+        "You're offline, so your vaults are read-only. Changes can be made once you're connected again."
+    )]
+    ReadOnlyOffline,
     /// The vaults are locked.
     #[error("Your vaults are locked. Unlock them first.")]
     Locked,
@@ -145,6 +171,12 @@ impl AppError {
             Self::ReadOnly => "read_only",
             Self::Clipboard => "clipboard",
             Self::Locked => "locked",
+            Self::ReadOnlyOffline => "read_only_offline",
+            Self::HelloUnavailable => "hello_unavailable",
+            Self::HelloCancelled => "hello_cancelled",
+            Self::HelloMissing => "hello_missing",
+            Self::HelloOff => "hello_off",
+            Self::PasswordNeeded => "password_needed",
             Self::ImportUnreadable => "import_unreadable",
             Self::ImportTooLarge => "import_too_large",
             Self::ImportRunning => "import_running",

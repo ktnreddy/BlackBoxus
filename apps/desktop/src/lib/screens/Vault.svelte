@@ -4,6 +4,7 @@
   import StatusBar from "../components/StatusBar.svelte";
   import {
     errorMessage,
+    isAppError,
     listItems,
     lock,
     syncVaults,
@@ -16,9 +17,13 @@
   import GeneratorDialog from "./vault/GeneratorDialog.svelte";
   import ImportDialog from "./vault/ImportDialog.svelte";
   import ItemEditor from "./vault/ItemEditor.svelte";
+  import SettingsDialog from "./vault/SettingsDialog.svelte";
   import ShareVault from "./vault/ShareVault.svelte";
 
-  let { onchange }: { status: AppStatus; onchange: (s: AppStatus) => void } = $props();
+  let {
+    status,
+    onchange,
+  }: { status: AppStatus; onchange: (s: AppStatus, why?: string) => void } = $props();
 
   /** Lock after this long without keyboard or mouse input. */
   const IDLE_LOCK_MS = 10 * 60 * 1000;
@@ -33,13 +38,18 @@
   let syncing = $state(true);
   let syncError = $state("");
   let syncedAt = $state<number | null>(null);
+  /** Showing this computer's copy because the server can't be reached. */
+  let offline = $state(false);
   let notice = $state("");
   let sharing = $state(false);
   let generatorOpen = $state(false);
   let importOpen = $state(false);
+  let settingsOpen = $state(false);
   let now = $state(Date.now());
 
-  const vault = $derived(vaults.find((v) => v.id === vaultId) ?? null);
+  const found = $derived(vaults.find((v) => v.id === vaultId) ?? null);
+  /** While offline, every vault is read-only. */
+  const vault = $derived(found && offline ? { ...found, writable: false } : found);
   const shownItems = $derived(
     items.filter(
       (i) =>
@@ -62,11 +72,23 @@
     syncing = true;
     syncError = "";
     try {
-      vaults = await syncVaults();
+      const synced = await syncVaults();
+      vaults = synced.vaults;
+      offline = synced.offline;
       if (!vaults.some((v) => v.id === vaultId)) vaultId = vaults[0]?.id ?? null;
       syncedAt = Date.now();
       await refreshItems();
     } catch (e) {
+      if (isAppError(e) && e.code === "signed_out") {
+        // The saved session expired: the master password is needed.
+        onchange(
+          await lock(),
+          offline
+            ? "You're back online. Unlock with your master password to sync and make changes."
+            : "Your session ended. Unlock with your master password.",
+        );
+        return;
+      }
       syncError = errorMessage(e);
     } finally {
       syncing = false;
@@ -149,6 +171,10 @@
 
 {#if syncing}
   <StatusBar icon="refresh" tone="quiet">Syncing and checking your vaults…</StatusBar>
+{:else if offline}
+  <StatusBar icon="alert" tone="quiet">
+    Offline. Showing the copy on this computer, read-only. Use sync to try again.
+  </StatusBar>
 {:else if syncError}
   <StatusBar icon="alert" tone="quiet">{syncError}</StatusBar>
 {:else}
@@ -173,7 +199,7 @@
         <span class="count">{v.items}</span>
       </button>
     {/each}
-    {#if vault}
+    {#if vault && !offline}
       <button
         type="button"
         class="side-item plain"
@@ -204,12 +230,25 @@
     <button type="button" class="side-item plain" onclick={() => (generatorOpen = true)}>
       <span class="side-name"><Icon name="wand" size={16} />Password generator</span>
     </button>
-    <button type="button" class="side-item plain" onclick={() => (importOpen = true)}>
+    <button
+      type="button"
+      class="side-item plain"
+      disabled={offline}
+      onclick={() => (importOpen = true)}
+    >
       <span class="side-name"><Icon name="upload" size={16} />Import passwords</span>
     </button>
     <div class="side-foot">
       <button type="button" class="btn ghost sm grow" onclick={lockNow}>
         <Icon name="lock" size={15} />Lock now
+      </button>
+      <button
+        type="button"
+        class="icon-btn"
+        aria-label="Settings"
+        onclick={() => (settingsOpen = true)}
+      >
+        <Icon name="gear" />
       </button>
       <button
         type="button"
@@ -313,6 +352,15 @@
   {/if}
 </div>
 
+{#if settingsOpen}
+  <SettingsDialog
+    {status}
+    onchange={(s) => onchange(s)}
+    onclose={() => (settingsOpen = false)}
+    onnotice={showNotice}
+  />
+{/if}
+
 {#if importOpen}
   <ImportDialog
     {vaults}
@@ -366,8 +414,12 @@
     cursor: pointer;
     text-align: left;
   }
-  .side-item:hover {
+  .side-item:hover:not(:disabled) {
     color: var(--text);
+  }
+  .side-item:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
   .side-item.on {
     background: var(--panel-2);

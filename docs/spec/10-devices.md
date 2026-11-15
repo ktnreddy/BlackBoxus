@@ -50,6 +50,16 @@ To avoid typing the master password every time, a device can unlock with a **dev
 2. The device key is stored in the platform's secure element (Secure Enclave on Apple devices, StrongBox or TEE-backed Keystore on Android, TPM on Windows), protected by a biometric or PIN check, and marked non-exportable where the platform allows.
 3. The wrapped copy is stored **only on the device**, never uploaded.
 
+Where the secure element cannot store an arbitrary secret but can sign with a non-exportable key behind a user check, the device key MAY instead be derived from a deterministic signature over a fixed challenge. On Windows, Windows Hello key credentials sign with RSA and PKCS #1 v1.5 padding, which is deterministic:
+
+```
+challenge  = "BlackBoxus v1 windows-hello challenge" ‖ account_id
+device_key = HKDF-SHA-256(salt = empty, IKM = Sign(challenge),
+                          info = "BlackBoxus v1 windows-hello device-key", L = 32)
+```
+
+So that the device can sync after such an unlock, the client MAY keep its current session token sealed under the key set with the local-storage sealing of Section 6.8 (context `"device-unlock session"`), and replace it after every master password unlock. The server still expires sessions as usual (Section 12).
+
 Clients MUST ask for the master password again after 14 days without one, after a device restart if the platform supports it, and whenever the secure element reports that enrolled biometrics changed. A device key MUST be deleted when the user signs out.
 
 ## 10.5 Passkey unlock (WebAuthn PRF)

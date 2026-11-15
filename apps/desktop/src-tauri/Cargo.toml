@@ -26,9 +26,11 @@ arboard = { version = "3.6", default-features = false }
 client-core = { version = "0.0.1", path = "../../../crates/client-core" }
 csv = "1.4.0"
 getrandom = "0.4.3"
+hkdf = "0.13.0"
 keyring-core = "1.0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.11.1"
 tauri = { version = "2.12.5", features = [] }
 tauri-plugin-dialog = "2.8.4"
 tauri-plugin-single-instance = "2.5.5"
@@ -44,6 +46,13 @@ zxcvbn = "3.1.1"
 # The Windows Credential Manager, which encrypts entries for the signed-in
 # Windows user.
 windows-native-keyring-store = { version = "1.1.0", default-features = false }
+# Windows Hello, through its key credentials held in the TPM.
+windows = { version = "0.62.2", features = [
+  "Foundation",
+  "Security_Credentials",
+  "Security_Cryptography",
+  "Storage_Streams",
+] }
 
 [lints]
 workspace = true

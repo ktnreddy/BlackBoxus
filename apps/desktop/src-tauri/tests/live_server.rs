@@ -23,11 +23,11 @@ fn create_sign_in_and_reject_a_wrong_password() -> Result<(), AppError> {
         .unwrap_or_default();
     let email = format!("desktop-{nonce}@example.com");
 
-    let (created, secret_key, kit) = create_account(&transport, &server, &email, PASSWORD)?;
+    let (created, _, secret_key, kit) = create_account(&transport, &server, &email, PASSWORD)?;
     assert_eq!(kit.email, email);
     assert!(SecretKey::parse(&kit.secret_key)? == secret_key);
 
-    let again = sign_in(&transport, &server, &email, &secret_key, PASSWORD)?;
+    let (again, _) = sign_in(&transport, &server, &email, &secret_key, PASSWORD)?;
     assert_eq!(again.session.account_id(), created.session.account_id());
 
     let wrong = sign_in(&transport, &server, &email, &secret_key, "not-the-password");
@@ -52,7 +52,7 @@ fn vaults_sync_write_and_survive_a_restart() -> Result<(), AppError> {
         .unwrap_or_default();
     let email = format!("vaults-{nonce}@example.com");
     let dir = std::env::temp_dir().join(format!("blackboxus-live-{nonce}"));
-    let (unlocked, secret_key, _) = create_account(&transport, &server, &email, PASSWORD)?;
+    let (unlocked, _, secret_key, _) = create_account(&transport, &server, &email, PASSWORD)?;
 
     // The first sync creates the account's first vault.
     let mut vaults = Vaults::new(VaultFiles::new(dir.clone()), log_key()?);
@@ -81,7 +81,7 @@ fn vaults_sync_write_and_survive_a_restart() -> Result<(), AppError> {
     assert_eq!(vaults.item(&id, &item_id)?, item);
 
     // Another device signs in, syncs from its own empty folder and sees it.
-    let other = sign_in(&transport, &server, &email, &secret_key, PASSWORD)?;
+    let (other, _) = sign_in(&transport, &server, &email, &secret_key, PASSWORD)?;
     let other_dir = dir.join("other");
     let mut elsewhere = Vaults::new(VaultFiles::new(other_dir), log_key()?);
     elsewhere.sync(&transport, &other)?;
@@ -119,13 +119,13 @@ fn sharing_a_vault_after_checking_the_safety_number() -> Result<(), AppError> {
         .map(|d| d.as_nanos())
         .unwrap_or_default();
     let dir = std::env::temp_dir().join(format!("blackboxus-share-{nonce}"));
-    let (alice, _, _) = create_account(
+    let (alice, _, _, _) = create_account(
         &transport,
         &server,
         &format!("alice-{nonce}@example.com"),
         PASSWORD,
     )?;
-    let (bob, _, _) = create_account(
+    let (bob, _, _, _) = create_account(
         &transport,
         &server,
         &format!("bob-{nonce}@example.com"),
@@ -226,7 +226,7 @@ fn importing_many_items_in_batches() -> Result<(), AppError> {
         .map(|d| d.as_nanos())
         .unwrap_or_default();
     let dir = std::env::temp_dir().join(format!("blackboxus-import-{nonce}"));
-    let (unlocked, _, _) = create_account(
+    let (unlocked, _, _, _) = create_account(
         &transport,
         &server,
         &format!("import-{nonce}@example.com"),
@@ -264,6 +264,70 @@ fn importing_many_items_in_batches() -> Result<(), AppError> {
     }
     assert_eq!(vaults.items(&id)?.len(), 120);
     assert!(started.elapsed().as_secs() < 60);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+#[ignore = "needs a running server and BLACKBOXUS_LOG_KEY"]
+fn offline_unlock_shows_the_last_synced_copy() -> Result<(), AppError> {
+    use blackboxus_desktop::vaults::{VaultFiles, Vaults, log_key};
+    use client_core::Session;
+    use client_core::login::{OfflineRecord, Unlocked};
+    use vault_core::login::SessionToken;
+    use vault_core::{Field, FieldKind, Item, ItemType, VaultId};
+
+    let transport = Https::new();
+    let server = ServerIdentity::new(ORIGIN)?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let dir = std::env::temp_dir().join(format!("blackboxus-offline-{nonce}"));
+    let (unlocked, record, secret_key, _) = create_account(
+        &transport,
+        &server,
+        &format!("offline-{nonce}@example.com"),
+        PASSWORD,
+    )?;
+    let mut vaults = Vaults::new(VaultFiles::new(dir.clone()), log_key()?);
+    vaults.sync(&transport, &unlocked)?;
+    let id = VaultId::from_bytes(
+        wire::unb64_array(
+            &vaults
+                .summaries(&unlocked)
+                .first()
+                .map(|v| v.id.clone())
+                .unwrap_or_default(),
+        )
+        .unwrap_or_default(),
+    );
+    let item = Item {
+        item_type: ItemType::Login,
+        created_ms: 1,
+        modified_ms: 1,
+        fields: vec![
+            Field::new(FieldKind::Title, "Northwind Bank"),
+            Field::new(FieldKind::Password, "Xq7#vL0o"),
+        ],
+    };
+    vaults.put(&transport, &unlocked, id, None, &item)?;
+
+    // No server from here on.
+    let record = OfflineRecord::from_json(&record.to_json()?)?;
+    let opened = record.unlock(PASSWORD, &secret_key)?;
+    let offline = Unlocked {
+        session: Session::restore(SessionToken::from_bytes([0; 32]), opened.account_id),
+        key_set: opened.key_set,
+        key_set_version: opened.key_set_version,
+    };
+    let mut local = Vaults::new(VaultFiles::new(dir.clone()), log_key()?);
+    local.load_local(&offline);
+    assert_eq!(local.summaries(&offline).len(), 1);
+    assert_eq!(
+        local.items(&id)?.first().map(|(_, i)| i.clone()),
+        Some(item)
+    );
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
