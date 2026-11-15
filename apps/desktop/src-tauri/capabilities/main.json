@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "What the main window may do: only BlackBoxus's own commands, nothing from Tauri's built-in plugins.",
+  "windows": ["main"],
+  "permissions": [
+    "allow-app-status",
+    "allow-rate-password",
+    "allow-create-account",
+    "allow-sign-in",
+    "allow-unlock",
+    "allow-lock"
+  ]
+}

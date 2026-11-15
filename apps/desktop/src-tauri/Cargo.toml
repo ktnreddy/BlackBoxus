@@ -1,0 +1,43 @@
+[package]
+name = "blackboxus-desktop"
+description = "The BlackBoxus desktop app for Windows"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+name = "blackboxus_desktop"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "blackboxus"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+client-core = { version = "0.0.1", path = "../../../crates/client-core" }
+keyring-core = "1.0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2.12.5", features = [] }
+tauri-plugin-single-instance = "2.5.5"
+thiserror = "2"
+# HTTPS with rustls and Mozilla's root certificates; no system TLS library.
+ureq = { version = "3.5.2", default-features = false, features = ["rustls"] }
+vault-core = { version = "0.0.1", path = "../../../crates/vault-core" }
+wire = { version = "0.0.1", path = "../../../crates/wire" }
+zeroize = { version = "1.9", features = ["serde"] }
+zxcvbn = "3.1.1"
+
+[target.'cfg(windows)'.dependencies]
+# The Windows Credential Manager, which encrypts entries for the signed-in
+# Windows user.
+windows-native-keyring-store = { version = "1.1.0", default-features = false }
+
+[lints]
+workspace = true

@@ -1,0 +1,187 @@
+//! Errors the window can be shown.
+
+use client_core::ClientError;
+use serde::Serialize;
+use vault_core::Error as CryptoError;
+
+/// An error returned by a command. It is sent to the window as
+/// `{ code, message }`; the message is written for the user and never
+/// carries secrets or server details.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum AppError {
+    /// There is no account on this computer yet.
+    #[error("There is no account on this computer yet.")]
+    NoAccount,
+    /// An account is already set up on this computer.
+    #[error("An account is already set up on this computer.")]
+    AccountExists,
+    /// The master password field was empty.
+    #[error("Enter your master password.")]
+    EmptyPassword,
+    /// A new master password is too short.
+    #[error("Use at least {0} characters for your master password.")]
+    PasswordTooShort(usize),
+    /// A master password is longer than the maximum.
+    #[error("That master password is too long.")]
+    PasswordTooLong,
+    /// A new master password is too easy to guess.
+    #[error("Choose a stronger master password: longer, with words that don't belong together.")]
+    WeakPassword,
+    /// The two new passwords differ.
+    #[error("The two passwords don't match.")]
+    PasswordsDiffer,
+    /// The email address is not valid.
+    #[error("Enter a valid email address.")]
+    InvalidEmail,
+    /// The Secret Key could not be read.
+    #[error("That Secret Key isn't valid: {0}. Check it against your Emergency Kit.")]
+    InvalidSecretKey(String),
+    /// Wrong email, Secret Key or password; the server cannot say which.
+    #[error("That email address, Secret Key or master password is wrong.")]
+    WrongCredentials,
+    /// Wrong master password while unlocking.
+    #[error("That master password is wrong.")]
+    WrongPassword,
+    /// Someone already has an account with this email address.
+    #[error("An account with this email address already exists.")]
+    EmailTaken,
+    /// Too many attempts.
+    #[error("Too many attempts. Try again {0}.")]
+    RateLimited(String),
+    /// The session ended.
+    #[error("Your session ended. Unlock again.")]
+    SignedOut,
+    /// The server could not be reached.
+    #[error("Can't reach the BlackBoxus server. Check your internet connection and try again.")]
+    Offline,
+    /// The server refused for a reason the user cannot fix.
+    #[error("The server couldn't do that right now. Try again later.")]
+    Server,
+    /// An answer from the server failed a check.
+    #[error(
+        "The server's answer failed a security check, so BlackBoxus stopped. \
+         If this keeps happening, something may be tampering with your connection."
+    )]
+    Tampered,
+    /// The Secret Key is missing from this computer's credential store.
+    #[error("This computer no longer has your Secret Key. Sign in again with your Emergency Kit.")]
+    SecretKeyMissing,
+    /// Reading or writing this computer's storage failed.
+    #[error("BlackBoxus couldn't save to this computer. Check there is free space and try again.")]
+    Storage,
+    /// Another action is still running.
+    #[error("Please wait for the last step to finish.")]
+    Busy,
+    /// Anything unexpected.
+    #[error("Something went wrong. Please try again.")]
+    Internal,
+}
+
+impl AppError {
+    /// A stable code the window can match on.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::NoAccount => "no_account",
+            Self::AccountExists => "account_exists",
+            Self::EmptyPassword => "empty_password",
+            Self::PasswordTooShort(_) => "password_too_short",
+            Self::PasswordTooLong => "password_too_long",
+            Self::WeakPassword => "weak_password",
+            Self::PasswordsDiffer => "passwords_differ",
+            Self::InvalidEmail => "invalid_email",
+            Self::InvalidSecretKey(_) => "invalid_secret_key",
+            Self::WrongCredentials => "wrong_credentials",
+            Self::WrongPassword => "wrong_password",
+            Self::EmailTaken => "email_taken",
+            Self::RateLimited(_) => "rate_limited",
+            Self::SignedOut => "signed_out",
+            Self::Offline => "offline",
+            Self::Server => "server",
+            Self::Tampered => "tampered",
+            Self::SecretKeyMissing => "secret_key_missing",
+            Self::Storage => "storage",
+            Self::Busy => "busy",
+            Self::Internal => "internal",
+        }
+    }
+}
+
+impl Serialize for AppError {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut s = serializer.serialize_struct("AppError", 2)?;
+        s.serialize_field("code", self.code())?;
+        s.serialize_field("message", &self.to_string())?;
+        s.end()
+    }
+}
+
+/// Says when to try again, in words.
+fn retry_in(seconds: Option<u64>) -> String {
+    match seconds {
+        Some(s) if s <= 90 => "in a minute".into(),
+        Some(s) => format!("in {} minutes", s.div_ceil(60)),
+        None => "later".into(),
+    }
+}
+
+impl From<CryptoError> for AppError {
+    fn from(error: CryptoError) -> Self {
+        match error {
+            CryptoError::PasswordEmpty => Self::EmptyPassword,
+            CryptoError::PasswordTooShort { min_chars } => Self::PasswordTooShort(min_chars),
+            CryptoError::PasswordTooLong { .. } => Self::PasswordTooLong,
+            CryptoError::InvalidIdentity => Self::InvalidEmail,
+            CryptoError::InvalidSecretKey(why) => Self::InvalidSecretKey(why.to_string()),
+            CryptoError::Authentication => Self::WrongCredentials,
+            _ => Self::Internal,
+        }
+    }
+}
+
+impl From<ClientError> for AppError {
+    fn from(error: ClientError) -> Self {
+        match error {
+            ClientError::WrongCredentials => Self::WrongCredentials,
+            ClientError::SignedOut => Self::SignedOut,
+            ClientError::RateLimited(after) => Self::RateLimited(retry_in(after)),
+            ClientError::Server { status: 409, .. } => Self::EmailTaken,
+            ClientError::Server { .. } => Self::Server,
+            ClientError::InvalidResponse => Self::Tampered,
+            ClientError::Crypto(e) => e.into(),
+            _ => Self::Internal,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn messages_and_codes() {
+        let e = AppError::from(ClientError::RateLimited(Some(600)));
+        assert_eq!(e.to_string(), "Too many attempts. Try again in 10 minutes.");
+        assert_eq!(e.code(), "rate_limited");
+        assert_eq!(
+            AppError::from(ClientError::Server {
+                status: 409,
+                code: "conflict".into()
+            }),
+            AppError::EmailTaken
+        );
+        assert_eq!(
+            AppError::from(ClientError::Crypto(CryptoError::PasswordTooShort {
+                min_chars: 12
+            }))
+            .to_string(),
+            "Use at least 12 characters for your master password."
+        );
+    }
+
+    #[test]
+    fn serialises_as_code_and_message() {
+        let json = serde_json::to_string(&AppError::Offline).unwrap_or_default();
+        assert!(json.starts_with(r#"{"code":"offline","message":"Can't reach"#));
+    }
+}

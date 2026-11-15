@@ -6,6 +6,7 @@ members = [
     "crates/server-worker",
     "crates/wire",
     "crates/client-core",
+    "apps/desktop/src-tauri",
 ]
 
 [workspace.package]

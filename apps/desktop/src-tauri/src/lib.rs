@@ -1,0 +1,57 @@
+//! The BlackBoxus desktop app.
+//!
+//! The window shows the screens; everything that touches keys or the
+//! server runs here, in Rust, through `client-core`. The window can only
+//! call the commands in `commands`, and the content security policy in
+//! `tauri.conf.json` stops it loading anything from the network.
+
+mod commands;
+mod error;
+pub mod flows;
+pub mod http;
+mod state;
+pub mod storage;
+mod strength;
+
+use tauri::Manager;
+
+pub use error::AppError;
+
+/// Why the app could not start.
+pub type StartError = tauri::Error;
+
+/// Starts the app and runs until the window is closed.
+///
+/// # Errors
+///
+/// Returns an error if the window or webview cannot be created.
+pub fn run() -> Result<(), StartError> {
+    tauri::Builder::default()
+        // Two copies of the app would race on the stored account, so a
+        // second launch just brings the open window forward.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                // Best effort: the window may be closing.
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
+        .setup(|app| {
+            storage::init_secret_store()?;
+            let dir = app.path().app_data_dir()?;
+            app.manage(state::AppState::new(
+                storage::Storage::new(dir),
+                http::Https::new(),
+            ));
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::app_status,
+            commands::rate_password,
+            commands::create_account,
+            commands::sign_in,
+            commands::unlock,
+            commands::lock,
+        ])
+        .run(tauri::generate_context!())
+}

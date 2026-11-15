@@ -3,6 +3,14 @@
 
 [graph]
 all-features = true
+# Only the platforms BlackBoxus ships on: the desktop app on Windows and
+# the server on WebAssembly. Linux-only crates (GTK and friends, pulled in
+# by Tauri for Linux builds) never reach users, so they are left out.
+targets = [
+  "x86_64-pc-windows-msvc",
+  "aarch64-pc-windows-msvc",
+  "wasm32-unknown-unknown",
+]
 
 [advisories]
 version = 2
@@ -32,9 +40,17 @@ allow = [
   "ISC",
   "MIT",
   "MIT-0",
+  # File-level copyleft, compatible with the AGPL (used by Tauri's CSS parser).
+  "MPL-2.0",
   "Unicode-3.0",
   "Zlib",
 ]
+
+# Mozilla's list of trusted root certificates, bundled so the desktop app
+# trusts the same authorities everywhere instead of whatever the system adds.
+[[licenses.exceptions]]
+crate = "webpki-roots"
+allow = ["CDLA-Permissive-2.0"]
 
 [bans]
 multiple-versions = "warn"
