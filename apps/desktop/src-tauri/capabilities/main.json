@@ -33,6 +33,10 @@
     "allow-hello-enable",
     "allow-hello-disable",
     "allow-unlock-with-hello",
-    "allow-totp-code"
+    "allow-totp-code",
+    "allow-get-settings",
+    "allow-set-settings",
+    "allow-show-emergency-kit",
+    "allow-sign-out"
   ]
 }

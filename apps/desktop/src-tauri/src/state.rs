@@ -221,6 +221,18 @@ impl AppState {
         f(session)
     }
 
+    /// Forgets the account after it was removed from this computer.
+    pub fn forget_account(&self) {
+        let session = {
+            let mut inner = self.inner();
+            inner.offline = false;
+            inner.account = None;
+            inner.session.take()
+        };
+        drop(session);
+        self.clipboard.clear_now();
+    }
+
     /// Locks the vaults, erasing the keys from memory and any secret left
     /// on the clipboard.
     pub fn lock(&self) {

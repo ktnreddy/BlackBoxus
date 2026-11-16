@@ -3,7 +3,11 @@
   import TopNav from "../components/TopNav.svelte";
   import type { EmergencyKit } from "../api";
 
-  let { kit, ondone }: { kit: EmergencyKit; ondone: () => void } = $props();
+  let {
+    kit,
+    again = false,
+    ondone,
+  }: { kit: EmergencyKit; again?: boolean; ondone: () => void } = $props();
 
   let saved = $state(false);
   const created = new Date().toLocaleDateString(undefined, {
@@ -13,11 +17,19 @@
   });
 </script>
 
-<TopNav><span class="small">Step 2 of 3</span></TopNav>
+<TopNav>
+  {#if again}
+    <button type="button" class="btn ghost sm" onclick={ondone}>Done</button>
+  {:else}
+    <span class="small">Step 2 of 3</span>
+  {/if}
+</TopNav>
 
 <main class="glow page split">
   <section class="stack">
-    <h1 class="display">Save your<br /><span class="hi">Emergency Kit.</span></h1>
+    <h1 class="display">
+      {again ? "Your" : "Save your"}<br /><span class="hi">Emergency Kit.</span>
+    </h1>
     <p class="lede">
       Your Secret Key and your master password together unlock your account on a new device. Keep
       this kit somewhere safe and offline, like a drawer at home.
@@ -32,6 +44,7 @@
         <Icon name="print" />Print or save as PDF
       </button>
     </div>
+    {#if !again}
     <div class="rule"></div>
     <div class="row confirm">
       <label class="check">
@@ -40,6 +53,7 @@
       </label>
       <button type="button" class="btn ghost sm" disabled={!saved} onclick={ondone}>Continue</button>
     </div>
+    {/if}
   </section>
 
   <article class="kit" aria-label="Emergency Kit">
@@ -47,7 +61,7 @@
     <div class="kit-body">
       <div class="kit-head">
         <span class="kit-logo"><span class="kit-mark"><i></i></span>BlackBoxus</span>
-        <span class="kit-muted">Created {created}</span>
+        <span class="kit-muted">{again ? "Printed" : "Created"} {created}</span>
       </div>
       <h2 class="kit-title">Emergency Kit</h2>
       <dl>

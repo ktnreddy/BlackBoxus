@@ -1,21 +1,44 @@
 <script lang="ts">
   import Icon from "../../components/Icon.svelte";
-  import { errorMessage, helloDisable, helloEnable, type AppStatus } from "../../api";
+  import PasswordField from "../../components/PasswordField.svelte";
+  import {
+    errorMessage,
+    helloDisable,
+    helloEnable,
+    setSettings,
+    showEmergencyKit,
+    signOut,
+    type AppStatus,
+    type EmergencyKit,
+  } from "../../api";
 
   let {
     status,
+    offline,
+    autoLock,
+    onautolock,
+    onkit,
     onchange,
     onclose,
     onnotice,
   }: {
     status: AppStatus;
+    offline: boolean;
+    autoLock: number;
+    onautolock: (minutes: number) => void;
+    onkit: (kit: EmergencyKit) => void;
     onchange: (s: AppStatus) => void;
     onclose: () => void;
     onnotice: (text: string) => void;
   } = $props();
 
+  const CHOICES = [1, 5, 10, 15, 30, 60];
+
   let busy = $state(false);
   let error = $state("");
+  let askingPassword = $state(false);
+  let password = $state("");
+  let confirmSignOut = $state(false);
 
   async function toggleHello() {
     busy = true;
@@ -23,12 +46,51 @@
     try {
       const next = status.hello.enabled ? await helloDisable() : await helloEnable();
       onchange(next);
-      onnotice(
-        next.hello.enabled ? "Windows Hello unlock is on." : "Windows Hello unlock is off.",
-      );
+      onnotice(next.hello.enabled ? "Windows Hello unlock is on." : "Windows Hello unlock is off.");
     } catch (e) {
       error = errorMessage(e);
     } finally {
+      busy = false;
+    }
+  }
+
+  async function chooseAutoLock(minutes: number) {
+    error = "";
+    try {
+      const saved = await setSettings({ auto_lock_minutes: minutes });
+      onautolock(saved.auto_lock_minutes);
+    } catch (e) {
+      error = errorMessage(e);
+    }
+  }
+
+  async function openKit(event: SubmitEvent) {
+    event.preventDefault();
+    if (busy || !password) return;
+    busy = true;
+    error = "";
+    const typed = password;
+    password = "";
+    try {
+      onkit(await showEmergencyKit(typed));
+    } catch (e) {
+      error = errorMessage(e);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function doSignOut() {
+    if (!confirmSignOut) {
+      confirmSignOut = true;
+      return;
+    }
+    busy = true;
+    error = "";
+    try {
+      onchange(await signOut());
+    } catch (e) {
+      error = errorMessage(e);
       busy = false;
     }
   }
@@ -69,10 +131,68 @@
           type="checkbox"
           role="switch"
           checked={status.hello.enabled}
-          disabled={busy || (!status.hello.available && !status.hello.enabled)}
+          disabled={busy || offline || (!status.hello.available && !status.hello.enabled)}
           onchange={toggleHello}
         />
       </label>
+    </div>
+
+    <div class="setting column">
+      <div class="text">
+        <span class="name"><Icon name="lock" size={18} />Lock after</span>
+        <span class="small">Your vaults lock when you haven't used BlackBoxus for this long.</span>
+      </div>
+      <div class="seg" role="group" aria-label="Lock after">
+        {#each CHOICES as minutes (minutes)}
+          <button
+            type="button"
+            aria-pressed={autoLock === minutes}
+            onclick={() => chooseAutoLock(minutes)}
+            >{minutes === 60 ? "1 hour" : `${minutes} min`}</button
+          >
+        {/each}
+      </div>
+    </div>
+
+    <div class="setting column">
+      <div class="text">
+        <span class="name"><Icon name="key" size={18} />Emergency Kit</span>
+        <span class="small">
+          See your Secret Key again, to print a new kit. Enter your master password first.
+        </span>
+      </div>
+      {#if askingPassword}
+        <form class="kit-form" onsubmit={openKit}>
+          <PasswordField id="kit-password" label="Master password" bind:value={password} disabled={busy} />
+          <button type="submit" class="btn ghost" disabled={busy || !password}>
+            {busy ? "Checking…" : "Show kit"}
+          </button>
+        </form>
+      {:else}
+        <button type="button" class="btn ghost sm start" onclick={() => (askingPassword = true)}>
+          Show Emergency Kit
+        </button>
+      {/if}
+    </div>
+
+    <div class="setting column">
+      <div class="text">
+        <span class="name"><Icon name="arrowLeft" size={18} />Sign out of this computer</span>
+        <span class="small">
+          Removes your account, Secret Key and vault copies from this computer. Your vaults stay safe
+          on the server; sign in again with your Emergency Kit.
+        </span>
+      </div>
+      <button
+        type="button"
+        class="btn sm start"
+        class:ghost={!confirmSignOut}
+        class:danger={confirmSignOut}
+        disabled={busy}
+        onclick={doSignOut}
+      >
+        {confirmSignOut ? "Sign out and remove everything here?" : "Sign out"}
+      </button>
     </div>
 
     {#if error}
@@ -96,17 +216,20 @@
     z-index: 10;
   }
   .dialog {
-    width: min(560px, calc(100vw - 48px));
-    padding: 32px 36px;
+    width: min(600px, calc(100vw - 48px));
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+    padding: 28px 34px;
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 4px;
     box-shadow: 0 50px 120px -40px rgba(0, 0, 0, 0.9);
   }
   .top {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    margin-bottom: 8px;
   }
   .title {
     margin: 0;
@@ -119,9 +242,12 @@
     gap: 20px;
     align-items: flex-start;
     justify-content: space-between;
-    padding: 18px 0;
+    padding: 16px 0;
     border-top: 1px solid var(--hair);
-    border-bottom: 1px solid var(--hair);
+  }
+  .setting.column {
+    flex-direction: column;
+    gap: 12px;
   }
   .text {
     display: flex;
@@ -134,6 +260,42 @@
     gap: 10px;
     font-size: 16px;
     font-weight: 500;
+  }
+  .start {
+    align-self: flex-start;
+  }
+  .kit-form {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    width: 100%;
+  }
+  .kit-form > :global(div) {
+    flex: 1;
+  }
+  .seg {
+    display: inline-flex;
+    padding: 4px;
+    border-radius: 999px;
+    background: #111113;
+    border: 1px solid var(--line);
+    gap: 2px;
+    flex-wrap: wrap;
+  }
+  .seg button {
+    height: 32px;
+    padding: 0 14px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .seg button[aria-pressed="true"] {
+    background: var(--text);
+    color: #111113;
   }
   .switch input {
     appearance: none;
@@ -168,7 +330,13 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
+  .danger {
+    background: #3a1414;
+    border: 1px solid #6b2a2a;
+    color: #ffc9c9;
+  }
   .actions {
     justify-content: flex-end;
+    margin-top: 8px;
   }
 </style>

@@ -19,6 +19,26 @@ use crate::error::AppError;
 
 const ACCOUNT_FILE: &str = "account.json";
 const OFFLINE_FILE: &str = "offline-unlock.json";
+const SETTINGS_FILE: &str = "settings.json";
+
+/// Preferences for this computer. Nothing secret.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Settings {
+    /// Lock after this many minutes without keyboard or mouse input.
+    pub auto_lock_minutes: u32,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            auto_lock_minutes: 10,
+        }
+    }
+}
+
+/// The auto-lock times on offer, in minutes.
+pub const AUTO_LOCK_CHOICES: [u32; 6] = [1, 5, 10, 15, 30, 60];
 const SERVICE: &str = "BlackBoxus";
 const FORMAT: u32 = 1;
 
@@ -149,6 +169,50 @@ impl Storage {
         }
     }
 
+    /// Reads this computer's settings, or the defaults.
+    pub fn settings(&self) -> Settings {
+        fs::read_to_string(self.dir.join(SETTINGS_FILE))
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default()
+    }
+
+    /// Saves this computer's settings.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Storage`] if they cannot be written.
+    pub fn save_settings(&self, settings: &Settings) -> Result<(), AppError> {
+        let json = serde_json::to_vec_pretty(settings).map_err(|_| AppError::Storage)?;
+        write_atomically(&self.dir, SETTINGS_FILE, &json)
+    }
+
+    /// Removes the account from this computer: its Secret Key, the account
+    /// record, the offline unlock record and every vault copy. Settings
+    /// stay. Nothing on the server changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Storage`] if something cannot be deleted.
+    pub fn remove_account(&self, record: &AccountRecord) -> Result<(), AppError> {
+        match entry(record)?.delete_credential() {
+            Ok(()) | Err(keyring_core::Error::NoEntry) => {}
+            Err(_) => return Err(AppError::Storage),
+        }
+        for file in [ACCOUNT_FILE, OFFLINE_FILE] {
+            match fs::remove_file(self.dir.join(file)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err(AppError::Storage),
+            }
+        }
+        match fs::remove_dir_all(self.vault_dir()) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(AppError::Storage),
+        }
+    }
+
     /// Reads the account's Secret Key.
     ///
     /// # Errors
@@ -215,6 +279,29 @@ mod tests {
         let record = AccountRecord::new(&identity, &AccountId::from_bytes([9; 16]), "x");
         let storage = Storage::new(temp_dir("missing"));
         assert_eq!(storage.secret_key(&record), Err(AppError::SecretKeyMissing));
+        Ok(())
+    }
+
+    #[test]
+    fn settings_and_removing_the_account() -> Result<(), AppError> {
+        init_secret_store()?;
+        let storage = Storage::new(temp_dir("remove"));
+        assert_eq!(storage.settings().auto_lock_minutes, 10);
+        storage.save_settings(&Settings {
+            auto_lock_minutes: 5,
+        })?;
+        assert_eq!(storage.settings().auto_lock_minutes, 5);
+
+        let identity = ClientIdentity::new("remove@example.com")?;
+        let record = AccountRecord::new(&identity, &AccountId::from_bytes([8; 16]), "x");
+        storage.save_account(&record, &SecretKey::generate()?)?;
+        write_atomically(&storage.vault_dir(), "a.vault", b"sealed")?;
+        storage.remove_account(&record)?;
+        assert_eq!(storage.load_account()?, None);
+        assert_eq!(storage.secret_key(&record), Err(AppError::SecretKeyMissing));
+        assert!(!storage.vault_dir().exists());
+        // Settings are kept for whoever signs in next.
+        assert_eq!(storage.settings().auto_lock_minutes, 5);
         Ok(())
     }
 

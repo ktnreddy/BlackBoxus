@@ -79,6 +79,22 @@ caught.
   random number generator without bias. It opens from the sidebar, or
   from a password field to fill it in.
 
+## Settings
+
+The settings dialog (sliders button at the bottom of the sidebar) holds:
+
+- **Unlock with Windows Hello** (below).
+- **Lock after** 1, 5, 10 (default), 15, 30 or 60 minutes without keyboard
+  or mouse input. Saved in `settings.json`; nothing secret.
+- **Emergency Kit:** shows the Secret Key again for printing, after the
+  master password is checked on this computer against the offline unlock
+  record.
+- **Sign out of this computer:** ends the session on the server (when
+  online), deletes the Windows Hello key, and removes the Secret Key from
+  the Credential Manager, the account record, the offline unlock record
+  and every vault copy. Settings stay. The account and its vaults are not
+  touched on the server.
+
 ## Windows Hello
 
 Settings → "Unlock with Windows Hello" lets the app unlock with a face,

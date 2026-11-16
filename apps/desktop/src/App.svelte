@@ -13,6 +13,8 @@
   let firstRun = $state<"welcome" | "signup" | "signin">("welcome");
   /** The Emergency Kit, held only until the user confirms they saved it. */
   let kit = $state<Kit | null>(null);
+  /** Whether the kit is being shown again from settings. */
+  let kitAgain = $state(false);
   /** Why the vaults were locked, shown on the unlock screen. */
   let lockNotice = $state("");
 
@@ -28,7 +30,14 @@
   {:else if status === null}
     <!-- Starting up; the status arrives within a few milliseconds. -->
   {:else if kit}
-    <EmergencyKit {kit} ondone={() => (kit = null)} />
+    <EmergencyKit
+      {kit}
+      again={kitAgain}
+      ondone={() => {
+        kit = null;
+        kitAgain = false;
+      }}
+    />
   {:else if status.account === null}
     {#if firstRun === "signup"}
       <Signup
@@ -59,8 +68,14 @@
   {:else}
     <Vault
       {status}
+      onkit={(k) => {
+        kit = k;
+        kitAgain = true;
+      }}
       onchange={(s, why) => {
         lockNotice = why ?? "";
+        // After signing out, start again from the welcome screen.
+        if (s.account === null) firstRun = "welcome";
         status = s;
       }}
     />

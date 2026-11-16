@@ -597,3 +597,76 @@ pub(crate) fn totp_code(
     })?;
     totp.code_at(now_ms() / 1000)
 }
+
+/// This computer's settings.
+#[tauri::command]
+pub(crate) fn get_settings(state: State<'_, AppState>) -> crate::storage::Settings {
+    state.storage.settings()
+}
+
+/// Changes this computer's settings.
+#[tauri::command]
+pub(crate) fn set_settings(
+    state: State<'_, AppState>,
+    settings: crate::storage::Settings,
+) -> Result<crate::storage::Settings, AppError> {
+    if !crate::storage::AUTO_LOCK_CHOICES.contains(&settings.auto_lock_minutes) {
+        return Err(AppError::InvalidSetting);
+    }
+    state.storage.save_settings(&settings)?;
+    Ok(settings)
+}
+
+/// The Emergency Kit, shown again after the master password is entered.
+/// The password is checked on this computer against the offline unlock
+/// record, so this works offline too.
+#[tauri::command]
+pub(crate) async fn show_emergency_kit(
+    app: AppHandle,
+    password: Zeroizing<String>,
+) -> Result<KitView, AppError> {
+    blocking(app, move |state| {
+        state.with_session(|_| Ok(()))?;
+        let record = state.account().ok_or(AppError::NoAccount)?;
+        let secret_key = state.storage.secret_key(&record)?;
+        let offline = state.storage.load_offline()?.ok_or(AppError::Storage)?;
+        offline
+            .unlock(&password, &secret_key)
+            .map_err(|e| match e {
+                client_core::ClientError::WrongCredentials => AppError::WrongPassword,
+                other => other.into(),
+            })?;
+        Ok(KitView {
+            email: record.email,
+            server: record.server,
+            secret_key: secret_key.to_display_string(),
+        })
+    })
+    .await
+}
+
+/// Signs out and removes the account from this computer: its Secret Key,
+/// vault copies, offline record and Windows Hello unlock. The account and
+/// its vaults stay on the server.
+#[tauri::command]
+pub(crate) async fn sign_out(app: AppHandle) -> Result<AppStatus, AppError> {
+    blocking(app, move |state| {
+        let record = state.account().ok_or(AppError::NoAccount)?;
+        // Best effort: end the session on the server too.
+        if state.status().offline {
+            // No session to end.
+        } else if let Ok(request) = state.with_session(|s| Ok(s.unlocked.session.logout_request()))
+        {
+            let _ = crate::http::Transport::send(&state.transport, &request);
+        }
+        if let Some(account) = wire::unb64_array(&record.account_id) {
+            state
+                .device
+                .disable(&vault_core::AccountId::from_bytes(account))?;
+        }
+        state.storage.remove_account(&record)?;
+        state.forget_account();
+        Ok(state.status())
+    })
+    .await
+}

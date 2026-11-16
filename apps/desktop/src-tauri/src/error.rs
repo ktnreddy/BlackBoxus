@@ -136,6 +136,9 @@ pub enum AppError {
         "That isn't a one-time code secret. Paste the setup key or otpauth:// link the site shows."
     )]
     InvalidTotp,
+    /// An unsupported setting.
+    #[error("That setting isn't available.")]
+    InvalidSetting,
     /// The vaults are locked.
     #[error("Your vaults are locked. Unlock them first.")]
     Locked,
@@ -176,6 +179,7 @@ impl AppError {
             Self::ReadOnly => "read_only",
             Self::Clipboard => "clipboard",
             Self::Locked => "locked",
+            Self::InvalidSetting => "invalid_setting",
             Self::InvalidTotp => "invalid_totp",
             Self::ReadOnlyOffline => "read_only_offline",
             Self::HelloUnavailable => "hello_unavailable",

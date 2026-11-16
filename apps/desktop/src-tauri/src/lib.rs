@@ -86,6 +86,10 @@ pub fn run() -> Result<(), StartError> {
             commands::hello_disable,
             commands::unlock_with_hello,
             commands::totp_code,
+            commands::get_settings,
+            commands::set_settings,
+            commands::show_emergency_kit,
+            commands::sign_out,
         ])
         .run(tauri::generate_context!())
 }

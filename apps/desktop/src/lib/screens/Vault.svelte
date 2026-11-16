@@ -9,6 +9,8 @@
     lock,
     syncVaults,
     type AppStatus,
+    type EmergencyKit,
+    getSettings,
     type ItemSummary,
     type ItemView,
     type VaultSummary,
@@ -23,10 +25,19 @@
   let {
     status,
     onchange,
-  }: { status: AppStatus; onchange: (s: AppStatus, why?: string) => void } = $props();
+    onkit,
+  }: {
+    status: AppStatus;
+    onchange: (s: AppStatus, why?: string) => void;
+    onkit: (kit: EmergencyKit) => void;
+  } = $props();
 
-  /** Lock after this long without keyboard or mouse input. */
-  const IDLE_LOCK_MS = 10 * 60 * 1000;
+  /** Lock after this many minutes without keyboard or mouse input. */
+  let autoLockMinutes = $state(10);
+  getSettings().then(
+    (s) => (autoLockMinutes = s.auto_lock_minutes),
+    () => {},
+  );
 
   let vaults = $state<VaultSummary[]>([]);
   let vaultId = $state<string | null>(null);
@@ -107,7 +118,7 @@
     let last = Date.now();
     const touch = () => (last = Date.now());
     const idle = setInterval(() => {
-      if (Date.now() - last > IDLE_LOCK_MS) lockNow();
+      if (Date.now() - last > autoLockMinutes * 60_000) lockNow();
     }, 15_000);
     window.addEventListener("keydown", touch);
     window.addEventListener("pointerdown", touch);
@@ -355,6 +366,13 @@
 {#if settingsOpen}
   <SettingsDialog
     {status}
+    {offline}
+    autoLock={autoLockMinutes}
+    onautolock={(m) => (autoLockMinutes = m)}
+    onkit={(k) => {
+      settingsOpen = false;
+      onkit(k);
+    }}
     onchange={(s) => onchange(s)}
     onclose={() => (settingsOpen = false)}
     onnotice={showNotice}

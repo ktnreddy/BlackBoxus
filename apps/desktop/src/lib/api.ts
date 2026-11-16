@@ -264,3 +264,23 @@ export interface TotpCode {
 export function totpCode(vault: string, item: string, index: number): Promise<TotpCode> {
   return invoke<TotpCode>("totp_code", { vault, item, index });
 }
+
+export interface Settings {
+  auto_lock_minutes: number;
+}
+
+export function getSettings(): Promise<Settings> {
+  return invoke<Settings>("get_settings");
+}
+
+export function setSettings(settings: Settings): Promise<Settings> {
+  return invoke<Settings>("set_settings", { settings });
+}
+
+export function showEmergencyKit(password: string): Promise<EmergencyKit> {
+  return invoke<EmergencyKit>("show_emergency_kit", { password });
+}
+
+export function signOut(): Promise<AppStatus> {
+  return invoke<AppStatus>("sign_out");
+}
