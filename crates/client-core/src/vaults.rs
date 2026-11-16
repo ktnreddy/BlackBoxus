@@ -25,8 +25,9 @@ use vault_core::log::{
     verify_log,
 };
 use vault_core::{
-    AccountId, Item, ItemId, MAX_ENVELOPE_LEN, OWNER_WRAPPED_VAULT_KEY_LEN, ShareInfo,
-    VAULT_SHARE_LEN, VaultId, VaultKey, local, open_item, seal_item,
+    AccountId, Field, FieldKind, Item, ItemId, ItemType, MAX_ENVELOPE_LEN,
+    OWNER_WRAPPED_VAULT_KEY_LEN, ShareInfo, VAULT_DETAILS_ITEM, VAULT_SHARE_LEN, VaultId, VaultKey,
+    local, open_item, seal_item,
 };
 use wire::{
     ItemsResponse, LogAppendRequest, LogResponse, SharePostRequest, SharesResponse,
@@ -317,6 +318,68 @@ impl VaultReplica {
     /// verified or a vault key is missing, or [`ClientError::Crypto`] if an
     /// envelope does not open.
     pub fn items(&self) -> Result<Vec<(ItemId, Item)>> {
+        Ok(self
+            .all_items()?
+            .into_iter()
+            .filter(|(id, item)| {
+                *id != VAULT_DETAILS_ITEM && item.item_type != ItemType::VaultDetails
+            })
+            .collect())
+    }
+
+    /// The vault's details (spec section 6.3), if it has any.
+    ///
+    /// # Errors
+    ///
+    /// As [`VaultReplica::items`].
+    pub fn details(&self) -> Result<Option<Item>> {
+        Ok(self
+            .all_items()?
+            .into_iter()
+            .find(|(id, item)| {
+                *id == VAULT_DETAILS_ITEM && item.item_type == ItemType::VaultDetails
+            })
+            .map(|(_, item)| item))
+    }
+
+    /// The vault's name from its details, if it has one.
+    ///
+    /// # Errors
+    ///
+    /// As [`VaultReplica::items`].
+    pub fn name(&self) -> Result<Option<String>> {
+        Ok(self.details()?.and_then(|d| {
+            d.fields
+                .into_iter()
+                .find(|f| f.kind == FieldKind::Title)
+                .map(|f| f.value.to_string())
+                .filter(|n| !n.trim().is_empty())
+        }))
+    }
+
+    /// Names the vault, keeping any description. Send the request, then
+    /// sync.
+    ///
+    /// # Errors
+    ///
+    /// As [`VaultReplica::put_item`].
+    pub fn rename(&self, unlocked: &Unlocked, name: &str, now_ms: u64) -> Result<Request> {
+        let mut details = self.details()?.unwrap_or(Item {
+            item_type: ItemType::VaultDetails,
+            created_ms: now_ms,
+            modified_ms: now_ms,
+            fields: Vec::new(),
+        });
+        details.modified_ms = now_ms;
+        details.fields.retain(|f| f.kind != FieldKind::Title);
+        details.fields.insert(0, Field::new(FieldKind::Title, name));
+        Ok(self
+            .put_item(unlocked, Some(VAULT_DETAILS_ITEM), &details, now_ms)?
+            .1)
+    }
+
+    /// Every item, including the vault's details.
+    fn all_items(&self) -> Result<Vec<(ItemId, Item)>> {
         let state = self.state.as_ref().ok_or(ClientError::InvalidResponse)?;
         let mut out = Vec::new();
         for (item_id, stored) in &self.items {
@@ -398,6 +461,10 @@ impl VaultReplica {
             Some(id) => id,
             None => ItemId::generate()?,
         };
+        // A vault's details live only under their reserved ID.
+        if (item_id == VAULT_DETAILS_ITEM) != (item.item_type == ItemType::VaultDetails) {
+            return Err(ClientError::NotAllowed);
+        }
         let revision = state
             .items
             .get(&item_id)
@@ -440,6 +507,9 @@ impl VaultReplica {
             .keys
             .get(&state.vault_key_version)
             .ok_or(ClientError::InvalidResponse)?;
+        if items.iter().any(|i| i.item_type == ItemType::VaultDetails) {
+            return Err(ClientError::NotAllowed);
+        }
         let mut seq = state.next_seq();
         let mut prev_hash = state.head.hash;
         let mut out = Vec::with_capacity(items.len());
@@ -480,6 +550,9 @@ impl VaultReplica {
         item_id: &ItemId,
         now_ms: u64,
     ) -> Result<Request> {
+        if *item_id == VAULT_DETAILS_ITEM {
+            return Err(ClientError::NotAllowed);
+        }
         let state = self.state.as_ref().ok_or(ClientError::InvalidResponse)?;
         let current = state
             .items
@@ -795,7 +868,8 @@ impl VaultReplica {
             .get(&state.vault_key_version)
             .ok_or(ClientError::InvalidResponse)?;
         let mut operations = Vec::new();
-        for (item_id, item) in self.items()? {
+        // The details too, so members added later can read the name.
+        for (item_id, item) in self.all_items()? {
             let current = state
                 .items
                 .get(&item_id)

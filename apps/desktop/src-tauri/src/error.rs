@@ -85,6 +85,9 @@ pub enum AppError {
     /// The edit form held something invalid.
     #[error("Give the item a title.")]
     InvalidItem,
+    /// A vault name is empty or too long.
+    #[error("Give the vault a name of up to 64 characters.")]
+    InvalidVaultName,
     /// The vault cannot be changed by this account.
     #[error("You can only view items in this vault.")]
     ReadOnly,
@@ -192,6 +195,7 @@ impl AppError {
             Self::NotFound => "not_found",
             Self::InvalidItem => "invalid_item",
             Self::ReadOnly => "read_only",
+            Self::InvalidVaultName => "invalid_vault_name",
             Self::Clipboard => "clipboard",
             Self::Locked => "locked",
             Self::NotOwner => "not_owner",

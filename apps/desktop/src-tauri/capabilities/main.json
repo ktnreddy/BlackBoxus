@@ -44,6 +44,8 @@
     "allow-recovery-key-status",
     "allow-create-recovery-key",
     "allow-remove-recovery-key",
-    "allow-recover-account"
+    "allow-recover-account",
+    "allow-create-vault",
+    "allow-rename-vault"
   ]
 }

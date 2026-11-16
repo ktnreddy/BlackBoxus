@@ -17,7 +17,7 @@ Who may write an item, and which revision is current, is enforced by the signed 
 | Value | Encoding | Chosen by |
 | --- | --- | --- |
 | Vault ID | 16 bytes | The client that creates the vault, `random(16)` |
-| Item ID | 16 bytes | The client that creates the item, `random(16)` |
+| Item ID | 16 bytes | The client that creates the item, `random(16)`; 16 zero bytes is reserved for the vault's details (6.3) |
 | Revision | `u64`, starting at 1 | Incremented by one for each saved version |
 
 ## 6.3 Item content
@@ -31,6 +31,9 @@ Who may write an item, and which revision is current, is enforced by the signed 
 | 3 | Payment card |
 | 4 | Identity |
 | 5 | API credential |
+| 6 | Vault details |
+
+A vault's **details** item holds its name, as the title, and an optional description, as notes. It always has the reserved item ID of 16 zero bytes; clients MUST ignore a details item under any other ID, MUST NOT list it with the vault's items, and SHOULD show a default name for a vault without one. Like every item it is encrypted, so the server never learns vault names, and members who may edit items may rename the vault. Type 6 was added before any client was released; later types and kinds need a new schema version, as below.
 
 ### Field kinds
 

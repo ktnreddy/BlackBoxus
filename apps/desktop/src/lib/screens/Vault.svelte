@@ -21,6 +21,7 @@
   import ItemEditor from "./vault/ItemEditor.svelte";
   import SettingsDialog from "./vault/SettingsDialog.svelte";
   import ShareVault from "./vault/ShareVault.svelte";
+  import VaultNameDialog from "./vault/VaultNameDialog.svelte";
 
   let {
     status,
@@ -56,6 +57,8 @@
   let generatorOpen = $state(false);
   let importOpen = $state(false);
   let settingsOpen = $state(false);
+  /** Naming a vault: a new one, or renaming the one shown. */
+  let naming = $state<"new" | "rename" | null>(null);
   let now = $state(Date.now());
 
   const found = $derived(vaults.find((v) => v.id === vaultId) ?? null);
@@ -206,10 +209,19 @@
         aria-current={v.id === vaultId ? "page" : undefined}
         onclick={() => chooseVault(v.id)}
       >
-        <span class="side-name"><span class="dot" class:on={v.id === vaultId}></span>{v.name}</span>
+        <span class="side-name">
+          <span class="dot" class:on={v.id === vaultId}></span>
+          <span class="vault-name">{v.name}</span>
+          {#if v.shared}<span class="shared" title="Shared"><Icon name="users" size={13} /></span>{/if}
+        </span>
         <span class="count">{v.items}</span>
       </button>
     {/each}
+    {#if !offline}
+      <button type="button" class="side-item plain" onclick={() => (naming = "new")}>
+        <span class="side-name"><Icon name="plus" size={16} />New vault</span>
+      </button>
+    {/if}
     {#if vault && !offline}
       <button
         type="button"
@@ -218,8 +230,13 @@
         aria-pressed={sharing}
         onclick={() => (sharing = !sharing)}
       >
-        <span class="side-name"><Icon name="users" size={16} />Share {vault.name}</span>
+        <span class="side-name"><Icon name="users" size={16} />Share this vault</span>
       </button>
+      {#if vault.writable}
+        <button type="button" class="side-item plain" onclick={() => (naming = "rename")}>
+          <span class="side-name"><Icon name="edit" size={16} />Rename this vault</span>
+        </button>
+      {/if}
     {/if}
     <div class="rule spacer"></div>
     <div class="small group">Show</div>
@@ -401,6 +418,19 @@
   />
 {/if}
 
+{#if naming}
+  <VaultNameDialog
+    vault={naming === "rename" ? vault : null}
+    onclose={() => (naming = null)}
+    ondone={(list, id) => {
+      showNotice(naming === "rename" ? "Vault renamed." : "Vault created.");
+      naming = null;
+      vaults = list;
+      chooseVault(id);
+    }}
+  />
+{/if}
+
 {#if generatorOpen}
   <GeneratorDialog onclose={() => (generatorOpen = false)} onnotice={showNotice} />
 {/if}
@@ -420,6 +450,7 @@
     flex-direction: column;
     gap: 4px;
     min-height: 0;
+    overflow-y: auto;
   }
   .brand {
     padding: 0 6px 18px;
@@ -459,6 +490,16 @@
     display: flex;
     align-items: center;
     gap: 10px;
+    min-width: 0;
+  }
+  .vault-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .shared {
+    display: flex;
+    color: var(--dim);
   }
   .dot {
     width: 8px;

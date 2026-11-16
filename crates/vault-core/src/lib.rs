@@ -58,8 +58,8 @@ pub use error::{Error, Result, SecretKeyError};
 pub use identity::{ClientIdentity, MAX_EMAIL_BYTES, MAX_ORIGIN_BYTES, ServerIdentity};
 pub use item::{
     Field, FieldKind, ID_LEN, Item, ItemId, ItemType, MAX_ENVELOPE_LEN, MAX_FIELDS,
-    MAX_LABEL_BYTES, MAX_VALUE_BYTES, MIN_ENVELOPE_LEN, OpenedItem, PADDING_BUCKETS, VaultId,
-    open_item, seal_item, seal_item_deterministic,
+    MAX_LABEL_BYTES, MAX_VALUE_BYTES, MIN_ENVELOPE_LEN, OpenedItem, PADDING_BUCKETS,
+    VAULT_DETAILS_ITEM, VaultId, open_item, seal_item, seal_item_deterministic,
 };
 pub use kdf::{AccountKeys, AccountSalt, KdfParams, SALT_LEN, derive_account_keys};
 pub use key::{KEY_LEN, SymmetricKey};

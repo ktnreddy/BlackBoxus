@@ -90,7 +90,15 @@ pub enum ItemType {
     Identity,
     /// An API key or other credential.
     ApiCredential,
+    /// The vault's own details: its name in the title, and an optional
+    /// description in the notes. Stored only under [`VAULT_DETAILS_ITEM`];
+    /// clients do not list it as an item.
+    VaultDetails,
 }
+
+/// The reserved item ID of a vault's details (spec section 6.3). Item IDs
+/// are otherwise random, so no ordinary item has it.
+pub const VAULT_DETAILS_ITEM: ItemId = ItemId::from_bytes([0; ID_LEN]);
 
 impl ItemType {
     const fn code(self) -> u8 {
@@ -100,6 +108,7 @@ impl ItemType {
             Self::Card => 3,
             Self::Identity => 4,
             Self::ApiCredential => 5,
+            Self::VaultDetails => 6,
         }
     }
 
@@ -110,6 +119,7 @@ impl ItemType {
             3 => Some(Self::Card),
             4 => Some(Self::Identity),
             5 => Some(Self::ApiCredential),
+            6 => Some(Self::VaultDetails),
             _ => None,
         }
     }

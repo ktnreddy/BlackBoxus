@@ -83,6 +83,10 @@ export interface VaultSummary {
   name: string;
   items: number;
   writable: boolean;
+  /** This account owns it. */
+  owner: boolean;
+  /** Someone else is a member too. */
+  shared: boolean;
 }
 
 export type ItemType = "login" | "note" | "card" | "identity" | "api";
@@ -322,4 +326,12 @@ export function recoverAccount(
   confirm: string,
 ): Promise<Created> {
   return invoke<Created>("recover_account", { email, recoveryKey, password, confirm });
+}
+
+export function createVault(name: string): Promise<{ id: string; vaults: VaultSummary[] }> {
+  return invoke<{ id: string; vaults: VaultSummary[] }>("create_vault", { name });
+}
+
+export function renameVault(vault: string, name: string): Promise<VaultSummary[]> {
+  return invoke<VaultSummary[]>("rename_vault", { vault, name });
 }

@@ -29,6 +29,11 @@ pub enum ClientError {
     #[error("invalid answer from the server")]
     InvalidResponse,
 
+    /// The app asked for a change the vault format does not allow, such as
+    /// deleting a vault's details or saving an ordinary item in their place.
+    #[error("not allowed for this item")]
+    NotAllowed,
+
     /// A cryptographic check failed, or input was invalid.
     #[error(transparent)]
     Crypto(#[from] vault_core::Error),

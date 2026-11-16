@@ -1348,3 +1348,102 @@ fn recovering_a_forgotten_password() {
         ClientError::SignedOut
     );
 }
+
+#[test]
+fn naming_a_vault() {
+    use vault_core::VAULT_DETAILS_ITEM;
+
+    let mut server = Server::new();
+    let accounts: Vec<(NewAccount, Unlocked)> = ["alice", "bob", "carol", "dave"]
+        .iter()
+        .map(|name| {
+            let email = format!("{name}@example.com");
+            let account = sign_up(&mut server, &email);
+            let unlocked = sign_in(&mut server, &email, PASSWORD, &account.secret_key).unwrap();
+            (account, unlocked)
+        })
+        .collect();
+    let a = &accounts[0].1;
+    let ids: Vec<AccountId> = accounts.iter().map(|(n, _)| n.account_id).collect();
+    let share = |server: &mut Server, vault: &mut VaultReplica, who: usize, now: u64| {
+        let keys = lookup(server, a, &ids[who]);
+        for req in vault.share_with(a, &keys, Role::Editor, now).unwrap() {
+            written(&server.send(&req)).unwrap();
+        }
+        sync(server, vault, a).unwrap();
+        accept_all(server, &accounts[who].1);
+    };
+
+    // A new vault has no name until one is given.
+    let mut vault = new_vault(&mut server, a);
+    assert_eq!(vault.name().unwrap(), None);
+    let req = vault.rename(a, "Family", 2).unwrap();
+    written(&server.send(&req)).unwrap();
+    sync(&mut server, &mut vault, a).unwrap();
+    let req = vault
+        .put_item(a, None, &login_item("Wi-Fi", "pw"), 3)
+        .unwrap()
+        .1;
+    written(&server.send(&req)).unwrap();
+    sync(&mut server, &mut vault, a).unwrap();
+    assert_eq!(vault.name().unwrap().as_deref(), Some("Family"));
+    // The details are not listed as an item.
+    assert_eq!(titles(&vault), ["Wi-Fi"]);
+
+    // They cannot be deleted, overwritten by an item, or put elsewhere.
+    assert_eq!(
+        vault.delete_item(a, &VAULT_DETAILS_ITEM, 4).unwrap_err(),
+        ClientError::NotAllowed
+    );
+    assert_eq!(
+        vault
+            .put_item(a, Some(VAULT_DETAILS_ITEM), &login_item("x", "y"), 4)
+            .unwrap_err(),
+        ClientError::NotAllowed
+    );
+    let details = vault.details().unwrap().unwrap();
+    assert_eq!(
+        vault.put_item(a, None, &details, 4).unwrap_err(),
+        ClientError::NotAllowed
+    );
+    assert_eq!(
+        vault
+            .put_new_items(a, std::slice::from_ref(&details), 4)
+            .unwrap_err(),
+        ClientError::NotAllowed
+    );
+
+    // Members see the name, and editors can change it.
+    share(&mut server, &mut vault, 1, 5);
+    let b = &accounts[1].1;
+    let mut bobs = VaultReplica::new(*vault.vault_id());
+    sync(&mut server, &mut bobs, b).unwrap();
+    assert_eq!(bobs.name().unwrap().as_deref(), Some("Family"));
+    let req = bobs.rename(b, "Home", 6).unwrap();
+    written(&server.send(&req)).unwrap();
+    sync(&mut server, &mut vault, a).unwrap();
+    assert_eq!(vault.name().unwrap().as_deref(), Some("Home"));
+
+    // After a key replacement the details are re-encrypted too, so someone
+    // added later can read the name.
+    share(&mut server, &mut vault, 2, 7);
+    let keep = lookup(&mut server, a, &ids[1]);
+    for req in vault
+        .remove_member(a, &ids[2], std::slice::from_ref(&keep), 8)
+        .unwrap()
+    {
+        written(&server.send(&req)).unwrap();
+    }
+    sync(&mut server, &mut vault, a).unwrap();
+    let reqs = vault.reencrypt_items(a, 9).unwrap();
+    assert_eq!(reqs.len(), 2);
+    for req in &reqs {
+        written(&server.send(req)).unwrap();
+    }
+    sync(&mut server, &mut vault, a).unwrap();
+    share(&mut server, &mut vault, 3, 10);
+    let mut daves = VaultReplica::new(*vault.vault_id());
+    sync(&mut server, &mut daves, &accounts[3].1).unwrap();
+    assert_eq!(daves.name().unwrap().as_deref(), Some("Home"));
+    assert_eq!(titles(&daves), ["Wi-Fi"]);
+}

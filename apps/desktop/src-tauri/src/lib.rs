@@ -97,6 +97,8 @@ pub fn run() -> Result<(), StartError> {
             commands::create_recovery_key,
             commands::remove_recovery_key,
             commands::recover_account,
+            commands::create_vault,
+            commands::rename_vault,
         ])
         .run(tauri::generate_context!())
 }

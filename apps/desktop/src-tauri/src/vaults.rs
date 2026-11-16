@@ -159,6 +159,27 @@ pub struct VaultSummary {
     pub items: usize,
     /// Whether this account can add and change items.
     pub writable: bool,
+    /// Whether this account owns it.
+    pub owner: bool,
+    /// Whether anyone else is a member.
+    pub shared: bool,
+}
+
+/// Longest vault name, in characters.
+pub const MAX_VAULT_NAME_CHARS: usize = 64;
+
+/// A vault name with surrounding spaces removed, if it is acceptable.
+///
+/// # Errors
+///
+/// Returns [`AppError::InvalidVaultName`] if it is empty or too long.
+pub fn vault_name(name: &str) -> Result<String, AppError> {
+    let name = name.trim();
+    let chars = name.chars().count();
+    if chars == 0 || chars > MAX_VAULT_NAME_CHARS || name.chars().any(char::is_control) {
+        return Err(AppError::InvalidVaultName);
+    }
+    Ok(name.to_owned())
 }
 
 /// A member of a vault, as listed in the window.
@@ -545,18 +566,80 @@ impl Vaults {
                 .is_some_and(|m| m.role == Role::Owner)
         });
         if !owns_one {
-            let own = self.lookup(transport, unlocked, &me)?;
-            let (replica, requests) =
-                create_vault(unlocked, &own, now_ms()).map_err(vault_error)?;
-            for request in &requests {
-                written(&transport.send(request)?).map_err(vault_error)?;
-            }
-            let id = *replica.vault_id();
-            self.replicas.insert(id, replica);
-            self.sync_one(transport, unlocked, id)?;
+            let id = self.create(transport, unlocked, "Personal")?;
+            // `create` adds it last; the first vault goes first.
+            self.order.retain(|v| *v != id);
             self.order.insert(0, id);
         }
         Ok(())
+    }
+
+    /// Creates a vault owned by this account, with a name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::InvalidVaultName`], or a server, network or
+    /// verification error.
+    pub fn create(
+        &mut self,
+        transport: &impl Transport,
+        unlocked: &Unlocked,
+        name: &str,
+    ) -> Result<VaultId, AppError> {
+        let name = vault_name(name)?;
+        let me = *unlocked.session.account_id();
+        let own = self.lookup(transport, unlocked, &me)?;
+        let (replica, requests) = create_vault(unlocked, &own, now_ms()).map_err(vault_error)?;
+        for request in &requests {
+            written(&transport.send(request)?).map_err(vault_error)?;
+        }
+        let id = *replica.vault_id();
+        self.replicas.insert(id, replica);
+        self.order.push(id);
+        self.sync_one(transport, unlocked, id)?;
+        self.rename(transport, unlocked, id, &name)?;
+        Ok(id)
+    }
+
+    /// Renames a vault. Anyone who can edit its items can.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::InvalidVaultName`], [`AppError::ReadOnly`], or a
+    /// server, network or verification error.
+    pub fn rename(
+        &mut self,
+        transport: &impl Transport,
+        unlocked: &Unlocked,
+        id: VaultId,
+        name: &str,
+    ) -> Result<(), AppError> {
+        let name = vault_name(name)?;
+        if !self.writable(&id, unlocked) {
+            return Err(AppError::ReadOnly);
+        }
+        for attempt in 0..2 {
+            let request = self
+                .replica(&id)?
+                .rename(unlocked, &name, now_ms())
+                .map_err(vault_error)?;
+            match written(&transport.send(&request)?) {
+                Ok(()) => return self.sync_one(transport, unlocked, id),
+                Err(e) if is_conflict(&e) && attempt == 0 => {
+                    self.sync_one(transport, unlocked, id)?;
+                }
+                Err(e) => return Err(vault_error(e)),
+            }
+        }
+        Err(AppError::Server)
+    }
+
+    fn writable(&self, id: &VaultId, unlocked: &Unlocked) -> bool {
+        self.replicas
+            .get(id)
+            .and_then(|r| r.state())
+            .and_then(|s| s.members.get(unlocked.session.account_id()))
+            .is_some_and(|m| matches!(m.role, Role::Owner | Role::Editor))
     }
 
     /// Accepts vault keys others have shared with this account. Each share
@@ -758,11 +841,13 @@ impl Vaults {
         }
     }
 
-    /// The vaults, for the window.
+    /// The vaults, for the window. A vault without a name is shown with a
+    /// default one.
     pub fn summaries(&self, unlocked: &Unlocked) -> Vec<VaultSummary> {
         let me = unlocked.session.account_id();
-        let mut owned = 0_usize;
-        self.order
+        let mut unnamed = 0_usize;
+        let mut list = self
+            .order
             .iter()
             .filter_map(|id| self.replicas.get(id).map(|r| (id, r)))
             // A vault this account left can still be listed by the server.
@@ -772,24 +857,31 @@ impl Vaults {
                     .state()
                     .and_then(|s| s.members.get(me))
                     .map(|m| m.role);
-                let name = if role == Some(Role::Owner) {
-                    owned = owned.saturating_add(1);
-                    if owned == 1 {
-                        "Personal".to_owned()
+                let name = replica.name().ok().flatten().unwrap_or_else(|| {
+                    if role == Some(Role::Owner) {
+                        unnamed = unnamed.saturating_add(1);
+                        if unnamed == 1 {
+                            "Personal".to_owned()
+                        } else {
+                            format!("Vault {unnamed}")
+                        }
                     } else {
-                        format!("Vault {owned}")
+                        "Shared vault".to_owned()
                     }
-                } else {
-                    "Shared with you".to_owned()
-                };
+                });
                 VaultSummary {
                     id: wire::b64(id.as_bytes()),
                     name,
                     items: replica.items().map(|i| i.len()).unwrap_or_default(),
                     writable: matches!(role, Some(Role::Owner | Role::Editor)),
+                    owner: role == Some(Role::Owner),
+                    shared: replica.state().is_some_and(|s| s.members.len() > 1),
                 }
             })
-            .collect()
+            .collect::<Vec<_>>();
+        // Your own vaults first, then those shared with you, each by name.
+        list.sort_by_cached_key(|v| (!v.owner, v.name.to_lowercase()));
+        list
     }
 
     fn replica(&self, id: &VaultId) -> Result<&VaultReplica, AppError> {
@@ -920,6 +1012,15 @@ impl Vaults {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vault_names() {
+        assert_eq!(vault_name("  Family  "), Ok("Family".to_owned()));
+        assert_eq!(vault_name("   "), Err(AppError::InvalidVaultName));
+        assert_eq!(vault_name("a\nb"), Err(AppError::InvalidVaultName));
+        assert!(vault_name(&"x".repeat(64)).is_ok());
+        assert_eq!(vault_name(&"x".repeat(65)), Err(AppError::InvalidVaultName));
+    }
 
     #[test]
     fn hex_decoding() {

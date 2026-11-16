@@ -516,3 +516,47 @@ fn recovering_with_a_recovery_key() -> Result<(), AppError> {
     );
     Ok(())
 }
+
+#[test]
+#[ignore = "needs a running server and BLACKBOXUS_LOG_KEY"]
+fn creating_and_renaming_vaults() -> Result<(), AppError> {
+    use blackboxus_desktop::vaults::{VaultFiles, Vaults, log_key};
+
+    let transport = Https::new();
+    let server = ServerIdentity::new(ORIGIN)?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let dir = std::env::temp_dir().join(format!("blackboxus-names-{nonce}"));
+    let (unlocked, _, _, _) = create_account(
+        &transport,
+        &server,
+        &format!("names-{nonce}@example.com"),
+        PASSWORD,
+    )?;
+    let mut vaults = Vaults::new(VaultFiles::new(dir.clone()), log_key()?);
+    vaults.sync(&transport, &unlocked)?;
+    let names = |v: &Vaults| -> Vec<String> {
+        v.summaries(&unlocked).into_iter().map(|s| s.name).collect()
+    };
+    // The first vault is named when it is made.
+    assert_eq!(names(&vaults), ["Personal"]);
+
+    let work = vaults.create(&transport, &unlocked, "  Work  ")?;
+    assert_eq!(names(&vaults), ["Personal", "Work"]);
+    assert_eq!(
+        vaults.create(&transport, &unlocked, " ").err(),
+        Some(AppError::InvalidVaultName)
+    );
+    vaults.rename(&transport, &unlocked, work, "Acme projects")?;
+    assert_eq!(names(&vaults), ["Acme projects", "Personal"]);
+    assert_eq!(vaults.items(&work)?.len(), 0);
+
+    // Another computer sees the same names after a fresh sync.
+    let mut other = Vaults::new(VaultFiles::new(dir.join("other")), log_key()?);
+    other.sync(&transport, &unlocked)?;
+    assert_eq!(names(&other), ["Acme projects", "Personal"]);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}

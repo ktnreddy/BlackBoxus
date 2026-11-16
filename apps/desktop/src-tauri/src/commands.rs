@@ -884,3 +884,44 @@ pub(crate) async fn recover_account(
     })
     .await
 }
+
+/// What [`create_vault`] returns.
+#[derive(Debug, Serialize)]
+pub(crate) struct NewVault {
+    id: String,
+    vaults: Vec<VaultSummary>,
+}
+
+/// Creates a vault with a name. Needs a connection.
+#[tauri::command]
+pub(crate) async fn create_vault(app: AppHandle, name: String) -> Result<NewVault, AppError> {
+    blocking(app, move |state| {
+        state.require_online()?;
+        state.with_session(|s| {
+            let id = s.vaults.create(&state.transport, &s.unlocked, &name)?;
+            Ok(NewVault {
+                id: wire::b64(id.as_bytes()),
+                vaults: s.vaults.summaries(&s.unlocked),
+            })
+        })
+    })
+    .await
+}
+
+/// Renames a vault. Needs a connection.
+#[tauri::command]
+pub(crate) async fn rename_vault(
+    app: AppHandle,
+    vault: String,
+    name: String,
+) -> Result<Vec<VaultSummary>, AppError> {
+    let id = vault_id(&vault)?;
+    blocking(app, move |state| {
+        state.require_online()?;
+        state.with_session(|s| {
+            s.vaults.rename(&state.transport, &s.unlocked, id, &name)?;
+            Ok(s.vaults.summaries(&s.unlocked))
+        })
+    })
+    .await
+}

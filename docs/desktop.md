@@ -57,6 +57,12 @@ its first sync. A sealed copy of each vault is saved after every sync and
 loaded on the next one, so a server that rolls a vault back or forks it is
 caught.
 
+- **More vaults:** "New vault" makes another vault, to keep work and home
+  apart or to share one set of items. Each vault's name is kept in an
+  encrypted details item (spec section 6.3), so the server never sees it,
+  and everyone the vault is shared with sees the same name. Anyone who can
+  edit a vault's items can rename it. Vaults made before names existed
+  show "Personal" or "Vault 2" until renamed.
 - **Items:** logins, secure notes and cards can be added, edited and
   deleted. Item lists and views never carry concealed values (passwords,
   card numbers, security codes); the window asks for one only when the
