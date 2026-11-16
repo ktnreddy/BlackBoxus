@@ -25,6 +25,8 @@ pub(crate) struct KitView {
     email: String,
     server: String,
     secret_key: Zeroizing<String>,
+    /// A recovery key just created, shown only this once.
+    recovery_key: Option<Zeroizing<String>>,
 }
 
 /// What [`create_account`] returns.
@@ -66,6 +68,29 @@ pub(crate) fn rate_password(password: Zeroizing<String>, email: String) -> Ratin
     strength::rate(&password, &words)
 }
 
+/// Checks a new master password is typed the same twice and is long and
+/// strong enough.
+fn check_new_password(email: &str, password: &str, confirm: &str) -> Result<(), AppError> {
+    if password != confirm {
+        return Err(AppError::PasswordsDiffer);
+    }
+    let words: Vec<&str> = email.split(['@', '.', '_', '-', '+']).collect();
+    let rating = strength::rate(password, &words);
+    if rating.chars < rating.min_chars {
+        return Err(AppError::PasswordTooShort(rating.min_chars));
+    }
+    if !rating.acceptable {
+        return Err(AppError::WeakPassword);
+    }
+    Ok(())
+}
+
+fn account_id_of(record: &AccountRecord) -> Result<vault_core::AccountId, AppError> {
+    wire::unb64_array(&record.account_id)
+        .map(vault_core::AccountId::from_bytes)
+        .ok_or(AppError::Storage)
+}
+
 /// Creates an account, stores its Secret Key on this computer, signs in
 /// and returns the Emergency Kit.
 #[tauri::command]
@@ -79,17 +104,7 @@ pub(crate) async fn create_account(
         if state.account().is_some() {
             return Err(AppError::AccountExists);
         }
-        if *password != *confirm {
-            return Err(AppError::PasswordsDiffer);
-        }
-        let words: Vec<&str> = email.split(['@', '.', '_', '-', '+']).collect();
-        let rating = strength::rate(&password, &words);
-        if rating.chars < rating.min_chars {
-            return Err(AppError::PasswordTooShort(rating.min_chars));
-        }
-        if !rating.acceptable {
-            return Err(AppError::WeakPassword);
-        }
+        check_new_password(&email, &password, &confirm)?;
         let server = server()?;
         let (unlocked, offline, secret_key, kit) =
             flows::create_account(&state.transport, &server, &email, &password)?;
@@ -104,6 +119,7 @@ pub(crate) async fn create_account(
                 email: kit.email,
                 server: kit.server,
                 secret_key: kit.secret_key,
+                recovery_key: None,
             },
         })
     })
@@ -639,6 +655,7 @@ pub(crate) async fn show_emergency_kit(
             email: record.email,
             server: record.server,
             secret_key: secret_key.to_display_string(),
+            recovery_key: None,
         })
     })
     .await
@@ -726,6 +743,144 @@ pub(crate) async fn leave_vault(app: AppHandle, vault: String) -> Result<(), App
     blocking(app, move |state| {
         state.require_online()?;
         state.with_session(|s| s.vaults.leave(&state.transport, &s.unlocked, id))
+    })
+    .await
+}
+
+/// Whether the account has a recovery key. Needs a connection.
+#[tauri::command]
+pub(crate) async fn recovery_key_status(app: AppHandle) -> Result<bool, AppError> {
+    blocking(app, move |state| {
+        state.require_online()?;
+        state.with_session(|s| flows::recovery_key_set(&state.transport, &s.unlocked))
+    })
+    .await
+}
+
+/// Creates a recovery key, replacing any earlier one, after the master
+/// password is entered. Returns a new Emergency Kit holding it, shown once.
+#[tauri::command]
+pub(crate) async fn create_recovery_key(
+    app: AppHandle,
+    password: Zeroizing<String>,
+) -> Result<KitView, AppError> {
+    blocking(app, move |state| {
+        state.require_online()?;
+        state.with_session(|_| Ok(()))?;
+        if password.is_empty() {
+            return Err(AppError::EmptyPassword);
+        }
+        let record = state.account().ok_or(AppError::NoAccount)?;
+        let secret_key = state.storage.secret_key(&record)?;
+        let key = flows::set_recovery_key(
+            &state.transport,
+            &server()?,
+            &record.email,
+            &secret_key,
+            &password,
+            &account_id_of(&record)?,
+        )?;
+        Ok(KitView {
+            email: record.email,
+            server: record.server,
+            secret_key: secret_key.to_display_string(),
+            recovery_key: Some(key.to_display_string()),
+        })
+    })
+    .await
+}
+
+/// Removes the recovery key, after the master password is entered.
+#[tauri::command]
+pub(crate) async fn remove_recovery_key(
+    app: AppHandle,
+    password: Zeroizing<String>,
+) -> Result<(), AppError> {
+    blocking(app, move |state| {
+        state.require_online()?;
+        state.with_session(|_| Ok(()))?;
+        if password.is_empty() {
+            return Err(AppError::EmptyPassword);
+        }
+        let record = state.account().ok_or(AppError::NoAccount)?;
+        let secret_key = state.storage.secret_key(&record)?;
+        flows::delete_recovery_key(
+            &state.transport,
+            &server()?,
+            &record.email,
+            &secret_key,
+            &password,
+            &account_id_of(&record)?,
+        )
+    })
+    .await
+}
+
+/// Sets a new master password with the recovery key, signs in, and makes a
+/// new recovery key, because the old one has been typed here. Works with
+/// no account on this computer, or for the account already set up on it,
+/// whose Secret Key is then kept. Returns a new Emergency Kit to save.
+#[tauri::command]
+pub(crate) async fn recover_account(
+    app: AppHandle,
+    email: String,
+    recovery_key: Zeroizing<String>,
+    password: Zeroizing<String>,
+    confirm: Zeroizing<String>,
+) -> Result<Created, AppError> {
+    blocking(app, move |state| {
+        let identity = ClientIdentity::new(&email)?;
+        let existing = state.account();
+        if existing
+            .as_ref()
+            .is_some_and(|r| r.email != identity.as_str())
+        {
+            return Err(AppError::AccountExists);
+        }
+        check_new_password(&email, &password, &confirm)?;
+        let kept = existing
+            .as_ref()
+            .and_then(|r| state.storage.secret_key(r).ok());
+        let server = server()?;
+        let account = flows::recover(
+            &state.transport,
+            &server,
+            &email,
+            &recovery_key,
+            &password,
+            kept,
+        )?;
+        let (unlocked, offline) = flows::sign_in(
+            &state.transport,
+            &server,
+            &email,
+            &account.secret_key,
+            &password,
+        )?;
+        if unlocked.session.account_id() != &account.account_id {
+            return Err(AppError::Tampered);
+        }
+        // The old key was typed on this computer, so replace it at once,
+        // while the session is fresh.
+        let (key, request) = client_core::recovery::new_recovery_key(&unlocked, identity.as_str())?;
+        client_core::vaults::written(&crate::http::Transport::send(&state.transport, &request)?)?;
+
+        // Windows Hello unlock held the old session, which has ended.
+        state.device.disable(&account.account_id)?;
+        let record = AccountRecord::new(&identity, &account.account_id, ORIGIN);
+        state.storage.save_account(&record, &account.secret_key)?;
+        state.storage.save_offline(&offline)?;
+        state.set_account(record, unlocked)?;
+        let kit = account.emergency_kit();
+        Ok(Created {
+            status: state.status(),
+            kit: KitView {
+                email: kit.email,
+                server: kit.server,
+                secret_key: kit.secret_key,
+                recovery_key: Some(key.to_display_string()),
+            },
+        })
     })
     .await
 }

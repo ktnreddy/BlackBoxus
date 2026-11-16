@@ -40,6 +40,10 @@
     "allow-sign-out",
     "allow-change-member-role",
     "allow-remove-member",
-    "allow-leave-vault"
+    "allow-leave-vault",
+    "allow-recovery-key-status",
+    "allow-create-recovery-key",
+    "allow-remove-recovery-key",
+    "allow-recover-account"
   ]
 }

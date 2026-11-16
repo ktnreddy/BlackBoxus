@@ -62,6 +62,14 @@ pub enum Route {
     SharePost,
     /// `GET /v1/shares`
     Shares,
+    /// `PUT /v1/recovery`
+    RecoveryPut,
+    /// `DELETE /v1/recovery`
+    RecoveryDelete,
+    /// `POST /v1/recovery/start`
+    RecoveryStart,
+    /// `POST /v1/recovery/finish`
+    RecoveryFinish,
     /// An endpoint of spec section 12 that this version does not serve yet.
     NotImplemented,
 }
@@ -71,9 +79,6 @@ const PLANNED: &[(&str, &str)] = &[
     ("PUT", "/v1/keyset/wrapped"),
     ("DELETE", "/v1/keyset/wrapped"),
     ("POST", "/v1/password"),
-    ("POST", "/v1/recovery/start"),
-    ("POST", "/v1/recovery/finish"),
-    ("PUT", "/v1/recovery"),
     ("GET", "/v1/accounts/self/leaves"),
     ("PUT", "/v1/emergency"),
 ];
@@ -96,6 +101,10 @@ pub fn route(method: &str, path: &str) -> Result<Route, ApiError> {
         ("GET", "/v1/vaults") => Some(Route::Vaults),
         ("POST", "/v1/shares") => Some(Route::SharePost),
         ("GET", "/v1/shares") => Some(Route::Shares),
+        ("PUT", "/v1/recovery") => Some(Route::RecoveryPut),
+        ("DELETE", "/v1/recovery") => Some(Route::RecoveryDelete),
+        ("POST", "/v1/recovery/start") => Some(Route::RecoveryStart),
+        ("POST", "/v1/recovery/finish") => Some(Route::RecoveryFinish),
         _ => None,
     };
     if let Some(r) = fixed {
@@ -337,6 +346,12 @@ pub const ENROLMENT_PER_IP: Limit = Limit {
     max: 20,
     window_ms: MINUTES_15,
 };
+/// `recovery/start` and `recovery/finish` together, per email address.
+pub const RECOVERY_PER_ADDRESS: Limit = Limit {
+    name: "recovery-addr",
+    max: 5,
+    window_ms: 4 * MINUTES_15,
+};
 /// Everything else, per session.
 pub const PER_SESSION: Limit = Limit {
     name: "session",
@@ -409,6 +424,12 @@ mod tests {
         assert_eq!(
             route("PUT", "/v1/keyset/wrapped"),
             Ok(Route::NotImplemented)
+        );
+        assert_eq!(route("PUT", "/v1/recovery"), Ok(Route::RecoveryPut));
+        assert_eq!(route("DELETE", "/v1/recovery"), Ok(Route::RecoveryDelete));
+        assert_eq!(
+            route("POST", "/v1/recovery/finish"),
+            Ok(Route::RecoveryFinish)
         );
         for (m, p) in [
             ("GET", "/v1/prelogin"),

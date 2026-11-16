@@ -17,7 +17,7 @@ use vault_core::login::SESSION_TOKEN_LEN;
 use vault_core::transparency::{KtLeaf, LEAF_LEN};
 use vault_core::{
     AccountId, AccountSalt, ClientIdentity, IdentitySecretKey, KdfParams, PublicKeyBundle,
-    ServerIdentity, WRAPPED_KEY_SET_LEN,
+    ServerIdentity, UnlockMethod, WRAPPED_KEY_SET_LEN,
 };
 use zeroize::Zeroizing;
 
@@ -458,23 +458,54 @@ pub fn take_enrolment(transfer: Option<EnrolmentTransfer>, now_ms: u64) -> Resul
     }
 }
 
-/// Checks a wrapped key set's length, format, version and method
+/// Checks a wrapped key set's length, format, version and method 1
 /// (spec section 5.4). The server cannot check the ciphertext.
 ///
 /// # Errors
 ///
 /// Returns [`Error::MalformedMessage`].
 pub fn check_wrapped_key_set(wrapped: &[u8], key_set_version: u32) -> Result<()> {
+    check_wrapped_copy(wrapped, key_set_version, UnlockMethod::MasterPassword)
+}
+
+/// As [`check_wrapped_key_set`], for a copy wrapped with `method`.
+///
+/// # Errors
+///
+/// Returns [`Error::MalformedMessage`].
+pub fn check_wrapped_copy(
+    wrapped: &[u8],
+    key_set_version: u32,
+    method: UnlockMethod,
+) -> Result<()> {
     let mut expected = [0_u8; 7];
     let (format, rest) = expected.split_at_mut(2);
     format.copy_from_slice(&1_u16.to_be_bytes());
-    let (version, method) = rest.split_at_mut(4);
+    let (version, code) = rest.split_at_mut(4);
     version.copy_from_slice(&key_set_version.to_be_bytes());
-    method.fill(1);
+    code.fill(method.code());
     if wrapped.len() != WRAPPED_KEY_SET_LEN || wrapped.get(..7) != Some(expected.as_slice()) {
         return Err(Error::MalformedMessage);
     }
     Ok(())
+}
+
+/// How recently a session must have been created for changes to how the
+/// account is unlocked (spec section 12.7).
+pub const FRESH_SESSION_MS: u64 = 300_000;
+
+/// Checks that a session was created in the last five minutes, by signing
+/// in with the master password.
+///
+/// # Errors
+///
+/// Returns [`Error::NotAllowed`] if it is older.
+pub fn require_fresh_session(session: &Session, now_ms: u64) -> Result<()> {
+    if now_ms.saturating_sub(session.created_ms) < FRESH_SESSION_MS {
+        Ok(())
+    } else {
+        Err(Error::NotAllowed)
+    }
 }
 
 #[cfg(test)]

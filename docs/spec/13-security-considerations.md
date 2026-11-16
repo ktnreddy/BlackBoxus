@@ -72,7 +72,7 @@ The revision log is signed but not encrypted (Section 8.7), so the membership an
 
 ### 13.6.4 Recovery key
 
-Anyone with a user's recovery key and email address can take over the account and read everything: the recovery key unlocks the key set without the master password or Secret Key (Section 11.3). This is the purpose of a recovery key, and the reason it is optional and kept offline. Email notification and ending all sessions make a takeover visible, but only if the server sends them.
+Anyone with a user's recovery key and email address can take over the account and read everything: the recovery key unlocks the key set without the master password or Secret Key (Section 11.3). This is the purpose of a recovery key, and the reason it is optional and kept offline. Ending all sessions makes a takeover visible on the user's other devices, which are signed out and find the old password no longer works. Email notification will add to this once the service can send email.
 
 ### 13.6.5 Trusted contacts
 
@@ -112,6 +112,7 @@ Reviewing the sections together found these problems, which are fixed in this ve
 2. **Released trusted contacts could not download anything.** The server only let a vault's creator and share recipients read a vault, so a released contact had keys but no data. Section 12.8 now gives a released contact read access to the owner's vaults.
 3. **Trusted contacts get the signing key.** Section 11.5 said what a contact cannot do but not that they can sign as the owner. It now says so, and owners must be told.
 4. **Custom Argon2id parameters reveal an account.** Section 3.4 now requires the defaults unless the user chooses otherwise, with a warning.
+5. **Recovery could not start on a new device.** The recovery token was derived with the account ID, which a device without the account does not know until the server accepts the token. Section 11.2 now derives it from the canonical email address. No recovery keys had been issued with the old derivation.
 
 ## 13.8 Implementation assurance
 

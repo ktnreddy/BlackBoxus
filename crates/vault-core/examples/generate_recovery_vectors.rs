@@ -33,6 +33,7 @@ fn main() {
     let rk_bytes = seq::<32>(0x30);
     let rk = RecoveryKey::from_bytes_for_test_vectors(rk_bytes);
     let account = AccountId::from_bytes(seq(0xA0));
+    let email = vault_core::ClientIdentity::new("owner@example.com").unwrap();
 
     let owner = KeySet::from_seeds_for_test_vectors([seq(0x00), seq(0x20), seq(0x40), seq(0x60)]);
     let contact_seeds = [seq(0x10), seq(0x30), seq(0x50), seq(0x70)];
@@ -58,17 +59,18 @@ fn main() {
         rk.to_display_string().as_str()
     );
     println!("  \"account_id_hex\": \"{}\",", hex(account.as_bytes()));
+    println!("  \"email\": \"{}\",", email.as_str());
     println!(
         "  \"wrapping_key_hex\": \"{}\",",
         hex(rk.wrapping_key(&account).unwrap().as_bytes())
     );
     println!(
         "  \"auth_token_hex\": \"{}\",",
-        hex(rk.auth_token(&account).unwrap().as_bytes())
+        hex(rk.auth_token(&email).unwrap().as_bytes())
     );
     println!(
         "  \"auth_verifier_hex\": \"{}\",",
-        hex(&rk.auth_verifier(&account).unwrap())
+        hex(&rk.auth_verifier(&email).unwrap())
     );
     println!("  \"grant_sample_hex\": \"{}\",", hex(&grant));
     println!(

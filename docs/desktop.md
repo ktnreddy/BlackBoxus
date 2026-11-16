@@ -95,7 +95,29 @@ The settings dialog (sliders button at the bottom of the sidebar) holds:
   and every vault copy. Settings stay. The account and its vaults are not
   touched on the server.
 
-## Windows Hello
+## Recovery key
+
+A recovery key lets someone who forgets their master password choose a
+new one (spec section 11). It is optional, and made in Settings:
+
+- The app asks for the master password and signs in again, because the
+  server only accepts a new or removed recovery key from a session less
+  than five minutes old. It then wraps the key set with the recovery key,
+  sends the wrapped copy and a hash of the recovery token, and ends that
+  extra session.
+- The new key is shown once, in a new Emergency Kit to print or save. It is
+  not stored on this computer.
+
+"Forgot your master password?" on the unlock and sign-in screens starts a
+recovery. The recovery key opens the key set, the user chooses a new
+master password, and the server replaces the old login and ends every
+session. If this computer already has the account, its Secret Key is
+kept; otherwise a new one is made. The app then signs in, turns Windows
+Hello unlock off (it held the old session), and makes a new recovery key at
+once, because the old one has been typed here. The new Emergency Kit shows
+both.
+
+
 
 Settings → "Unlock with Windows Hello" lets the app unlock with a face,
 fingerprint or PIN instead of the master password (spec section 10.4).

@@ -93,6 +93,10 @@ pub fn run() -> Result<(), StartError> {
             commands::change_member_role,
             commands::remove_member,
             commands::leave_vault,
+            commands::recovery_key_status,
+            commands::create_recovery_key,
+            commands::remove_recovery_key,
+            commands::recover_account,
         ])
         .run(tauri::generate_context!())
 }

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { appStatus, errorMessage, type AppStatus, type EmergencyKit as Kit } from "./lib/api";
   import EmergencyKit from "./lib/screens/EmergencyKit.svelte";
+  import Recover from "./lib/screens/Recover.svelte";
   import SignIn from "./lib/screens/SignIn.svelte";
   import Signup from "./lib/screens/Signup.svelte";
   import Unlock from "./lib/screens/Unlock.svelte";
@@ -10,11 +11,24 @@
   let status = $state<AppStatus | null>(null);
   let failure = $state("");
   /** Which first-run screen is showing when there is no account yet. */
-  let firstRun = $state<"welcome" | "signup" | "signin">("welcome");
+  let firstRun = $state<"welcome" | "signup" | "signin" | "recover">("welcome");
+  /** Recovering the locked account on this computer. */
+  let recovering = $state(false);
   /** The Emergency Kit, held only until the user confirms they saved it. */
   let kit = $state<Kit | null>(null);
   /** Whether the kit is being shown again from settings. */
   let kitAgain = $state(false);
+  /** The step the kit is in sign-up, if it is shown there. */
+  let kitStep = $state<string | null>(null);
+
+  /** After a recovery: the new kit, with its new recovery key, to save. */
+  function recovered(created: { status: AppStatus; kit: Kit }) {
+    kit = created.kit;
+    kitAgain = false;
+    kitStep = null;
+    recovering = false;
+    status = created.status;
+  }
   /** Why the vaults were locked, shown on the unlock screen. */
   let lockNotice = $state("");
 
@@ -33,6 +47,7 @@
     <EmergencyKit
       {kit}
       again={kitAgain}
+      step={kitStep}
       ondone={() => {
         kit = null;
         kitAgain = false;
@@ -43,12 +58,19 @@
       <Signup
         oncreated={(created) => {
           kit = created.kit;
+          kitStep = "Step 2 of 3";
           status = created.status;
         }}
         onback={() => (firstRun = "welcome")}
       />
     {:else if firstRun === "signin"}
-      <SignIn onsignedin={(s) => (status = s)} onback={() => (firstRun = "welcome")} />
+      <SignIn
+        onsignedin={(s) => (status = s)}
+        onback={() => (firstRun = "welcome")}
+        onforgot={() => (firstRun = "recover")}
+      />
+    {:else if firstRun === "recover"}
+      <Recover onrecovered={recovered} onback={() => (firstRun = "signin")} />
     {:else}
       <Welcome
         {status}
@@ -56,10 +78,17 @@
         onsignin={() => (firstRun = "signin")}
       />
     {/if}
+  {:else if status.locked && recovering}
+    <Recover
+      knownEmail={status.account.email}
+      onrecovered={recovered}
+      onback={() => (recovering = false)}
+    />
   {:else if status.locked}
     <Unlock
       {status}
       notice={lockNotice}
+      onforgot={() => (recovering = true)}
       onchange={(s) => {
         lockNotice = "";
         status = s;
@@ -70,7 +99,10 @@
       {status}
       onkit={(k) => {
         kit = k;
-        kitAgain = true;
+        // A new recovery key is shown only once, so ask to confirm it was
+        // saved; the kit on its own can be shown again any time.
+        kitAgain = k.recovery_key === null;
+        kitStep = null;
       }}
       onchange={(s, why) => {
         lockNotice = why ?? "";

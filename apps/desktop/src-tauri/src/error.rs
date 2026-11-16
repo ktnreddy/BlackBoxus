@@ -36,6 +36,13 @@ pub enum AppError {
     /// The Secret Key could not be read.
     #[error("That Secret Key isn't valid: {0}. Check it against your Emergency Kit.")]
     InvalidSecretKey(String),
+    /// The recovery key could not be read.
+    #[error("That recovery key isn't valid: {0}. Check it against your Emergency Kit.")]
+    InvalidRecoveryKey(String),
+    /// The recovery key does not match the email address, or the account
+    /// has no recovery key.
+    #[error("That recovery key doesn't match this email address.")]
+    WrongRecoveryKey,
     /// Wrong email, Secret Key or password; the server cannot say which.
     #[error("That email address, Secret Key or master password is wrong.")]
     WrongCredentials,
@@ -169,6 +176,8 @@ impl AppError {
             Self::PasswordsDiffer => "passwords_differ",
             Self::InvalidEmail => "invalid_email",
             Self::InvalidSecretKey(_) => "invalid_secret_key",
+            Self::InvalidRecoveryKey(_) => "invalid_recovery_key",
+            Self::WrongRecoveryKey => "wrong_recovery_key",
             Self::WrongCredentials => "wrong_credentials",
             Self::WrongPassword => "wrong_password",
             Self::EmailTaken => "email_taken",

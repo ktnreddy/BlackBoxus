@@ -57,6 +57,8 @@ export interface EmergencyKit {
   email: string;
   server: string;
   secret_key: string;
+  /** A recovery key just created, shown only this once. */
+  recovery_key: string | null;
 }
 
 export interface Created {
@@ -299,4 +301,25 @@ export function removeMember(vault: string, sharingId: string): Promise<Member[]
 
 export function leaveVault(vault: string): Promise<void> {
   return invoke<void>("leave_vault", { vault });
+}
+
+export function recoveryKeyStatus(): Promise<boolean> {
+  return invoke<boolean>("recovery_key_status");
+}
+
+export function createRecoveryKey(password: string): Promise<EmergencyKit> {
+  return invoke<EmergencyKit>("create_recovery_key", { password });
+}
+
+export function removeRecoveryKey(password: string): Promise<void> {
+  return invoke<void>("remove_recovery_key", { password });
+}
+
+export function recoverAccount(
+  email: string,
+  recoveryKey: string,
+  password: string,
+  confirm: string,
+): Promise<Created> {
+  return invoke<Created>("recover_account", { email, recoveryKey, password, confirm });
 }

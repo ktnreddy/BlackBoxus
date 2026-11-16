@@ -18,6 +18,8 @@ pub enum Method {
     Post,
     /// `PUT`
     Put,
+    /// `DELETE`
+    Delete,
 }
 
 impl Method {
@@ -28,6 +30,7 @@ impl Method {
             Self::Get => "GET",
             Self::Post => "POST",
             Self::Put => "PUT",
+            Self::Delete => "DELETE",
         }
     }
 }

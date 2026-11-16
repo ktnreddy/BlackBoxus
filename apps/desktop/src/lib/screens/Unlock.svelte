@@ -9,7 +9,13 @@
     status,
     notice = "",
     onchange,
-  }: { status: AppStatus; notice?: string; onchange: (s: AppStatus) => void } = $props();
+    onforgot,
+  }: {
+    status: AppStatus;
+    notice?: string;
+    onchange: (s: AppStatus) => void;
+    onforgot: () => void;
+  } = $props();
 
   const helloReady = $derived(
     status.hello.available && status.hello.enabled && !status.hello.needs_password,
@@ -88,6 +94,9 @@
           </button>
         {/if}
       </div>
+      <button type="button" class="link start" onclick={onforgot} disabled={busy}>
+        Forgot your master password?
+      </button>
     </form>
   </section>
 </main>
@@ -105,5 +114,8 @@
   .actions {
     display: flex;
     gap: 12px;
+  }
+  .start {
+    align-self: flex-start;
   }
 </style>

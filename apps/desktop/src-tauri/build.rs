@@ -39,6 +39,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "change_member_role",
             "remove_member",
             "leave_vault",
+            "recovery_key_status",
+            "create_recovery_key",
+            "remove_recovery_key",
+            "recover_account",
         ]),
     ))?;
     Ok(())

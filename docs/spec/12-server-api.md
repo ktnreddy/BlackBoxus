@@ -56,7 +56,7 @@ The server MUST apply at least these limits, per window of 15 minutes:
 |---|---|
 | `prelogin` and `login/start` | 10 per email address, 100 per client IP address |
 | `login/finish` failures | 5 per email address; then the address is locked for 15 minutes |
-| `recovery/finish` | 5 per email address per hour |
+| `recovery/start` and `recovery/finish` | 5 together per email address per hour, and the per-IP limit of `login/start`. A successful `recovery/finish` lifts any lock from failed logins. |
 | `enrolment` downloads | 20 per client IP address |
 | Everything else | 600 per session |
 
@@ -82,7 +82,7 @@ Limits per email address apply equally to addresses without an account, so they 
 | Method and path | Request → response | Server checks |
 |---|---|---|
 | `POST /v1/logout` | → `{}` | Deletes this session. |
-| `GET /v1/keyset` | → `{account_id, key_set_version, wrapped: [{method, credential_id?, data}]}` | Only this account's wrapped copies. Device-key copies are never stored (10.4). |
+| `GET /v1/keyset` | → `{account_id, key_set_version, wrapped: [{method, credential_id?, data}]}` | Only this account's wrapped copies, including the recovery copy (method 4) if there is one, so clients can show whether a recovery key is set. Device-key copies are never stored (10.4). |
 | `PUT /v1/keyset/wrapped` | `{method, credential_id?, data}` → `{}` | Method is 2 (passkey, with a credential ID of at most 1023 bytes), 4 or 5; header matches the current key set version and the method. |
 | `DELETE /v1/keyset/wrapped` | `{method, credential_id?}` → `{}` | Deletes that copy. Method 1 cannot be deleted. |
 | `POST /v1/password` | `{upload, salt, kdf, wrapped_key_set}` → `{}` | Session less than 5 minutes old. As for `register/finish`; ends all other sessions. |
@@ -97,7 +97,8 @@ Limits per email address apply equally to addresses without an account, so they 
 | `GET /v1/vaults/{vault_id}/keys` | → `{keys: [...]}` | This account's wrapped copies of the vault key. |
 | `POST /v1/shares` | `{share}` → `{}` | Share is 4627 bytes, its sender is this account and an owner of the vault, and the recipient is another member (7.4). Members are added to the log before their share is sent. |
 | `GET /v1/shares` | → `{shares: [...]}` | Shares addressed to this account. |
-| `PUT /v1/recovery` | `{verifier, wrapped_key_set}` → `{}` | Wrapped key set uses method 4. Replaces any earlier recovery key (11.2). |
+| `PUT /v1/recovery` | `{verifier, wrapped_key_set}` → `{}` | Session less than 5 minutes old. Verifier is 32 bytes; the wrapped key set uses method 4 and the current key set version. Replaces any earlier recovery key (11.2). |
+| `DELETE /v1/recovery` | → `{}` | Session less than 5 minutes old. Deletes the recovery key. |
 | `PUT /v1/emergency` | `{grant}` → `{}` | Grant is 4609 bytes and its owner is this account (11.4). |
 | `POST /v1/emergency/{owner_id}/request` | → `{release_at}` | This account is the grant's contact and it is idle. Notifies the owner (11.5). |
 | `POST /v1/emergency/{contact_id}/deny` | → `{}` | This account is the grant's owner and a request is pending. |

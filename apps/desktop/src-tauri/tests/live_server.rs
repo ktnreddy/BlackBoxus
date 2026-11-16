@@ -434,3 +434,85 @@ fn removing_and_leaving_replace_the_key() -> Result<(), AppError> {
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
+
+#[test]
+#[ignore = "needs a running server"]
+fn recovering_with_a_recovery_key() -> Result<(), AppError> {
+    use blackboxus_desktop::flows::{recover, recovery_key_set, set_recovery_key};
+
+    const NEW_PASSWORD: &str = "harbor-cinder-mosaic-thistle";
+    let transport = Https::new();
+    let server = ServerIdentity::new(ORIGIN)?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let email = format!("recover-{nonce}@example.com");
+    let (created, _, secret_key, _) = create_account(&transport, &server, &email, PASSWORD)?;
+    let account = *created.session.account_id();
+    assert!(!recovery_key_set(&transport, &created)?);
+
+    // Making a key needs the right master password.
+    assert_eq!(
+        set_recovery_key(
+            &transport,
+            &server,
+            &email,
+            &secret_key,
+            "wrong-password",
+            &account
+        )
+        .err(),
+        Some(AppError::WrongPassword)
+    );
+    let key = set_recovery_key(&transport, &server, &email, &secret_key, PASSWORD, &account)?;
+    assert!(recovery_key_set(&transport, &created)?);
+    let typed = key.to_display_string();
+
+    // A mistyped or wrong key is refused before anything changes.
+    assert!(matches!(
+        recover(&transport, &server, &email, "BR1-ABC", NEW_PASSWORD, None),
+        Err(AppError::InvalidRecoveryKey(_))
+    ));
+    let other = vault_core::recovery::RecoveryKey::generate()?.to_display_string();
+    assert_eq!(
+        recover(&transport, &server, &email, &other, NEW_PASSWORD, None).err(),
+        Some(AppError::WrongRecoveryKey)
+    );
+
+    // Recovering on a new computer makes a new Secret Key; the old password
+    // and session stop working.
+    let recovered = recover(&transport, &server, &email, &typed, NEW_PASSWORD, None)?;
+    assert!(recovered.new_secret_key);
+    assert_eq!(recovered.account_id, account);
+    assert_eq!(
+        recovery_key_set(&transport, &created).err(),
+        Some(AppError::SignedOut)
+    );
+    assert_eq!(
+        sign_in(&transport, &server, &email, &secret_key, PASSWORD).err(),
+        Some(AppError::WrongCredentials)
+    );
+    let (again, _) = sign_in(
+        &transport,
+        &server,
+        &email,
+        &recovered.secret_key,
+        NEW_PASSWORD,
+    )?;
+    assert_eq!(again.session.account_id(), &account);
+
+    // Removing the key, with that fresh session, stops it working. (Each
+    // sign-in counts twice towards the per-address limit of 10 every 15
+    // minutes, so this reuses the session instead of signing in again.)
+    let request = client_core::recovery::remove_recovery_key(&again);
+    client_core::vaults::written(&blackboxus_desktop::http::Transport::send(
+        &transport, &request,
+    )?)?;
+    assert!(!recovery_key_set(&transport, &again)?);
+    assert_eq!(
+        recover(&transport, &server, &email, &typed, PASSWORD, None).err(),
+        Some(AppError::WrongRecoveryKey)
+    );
+    Ok(())
+}

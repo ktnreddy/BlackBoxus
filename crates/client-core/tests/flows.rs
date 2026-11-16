@@ -19,10 +19,13 @@ use client_core::signup::{NewAccount, Signup};
 use client_core::{ClientError, Request, Response};
 use server_core::api::{
     AccountRecord, Api, EnrolmentTransfer, NewAccount as ServerNewAccount, PendingLogin, Session,
-    accept_enrolment, session_token_hash, take_enrolment,
+    accept_enrolment, require_fresh_session, session_token_hash, take_enrolment,
 };
 use server_core::login::OpaqueServer;
 use server_core::prelogin::FakeSaltKey;
+use server_core::recovery::{
+    NewPassword, RecoveryRecord, accept_recovery_key, recovery_finish, recovery_start,
+};
 use server_core::transparency::KtLog;
 use server_core::vaults::{
     self as server_vaults, ItemWrite, VaultRules, accept_append, accept_owner_key, touched_item,
@@ -53,6 +56,7 @@ struct Server {
     /// When set, tamper with key lookups to simulate a malicious server.
     swap_bundles: bool,
     vaults: Vaults,
+    recovery: HashMap<AccountId, RecoveryRecord>,
 }
 
 /// An item's revision, envelope (none if deleted) and log sequence.
@@ -91,6 +95,7 @@ impl Server {
             now: 1_000,
             swap_bundles: false,
             vaults: Vaults::default(),
+            recovery: HashMap::new(),
         }
     }
 
@@ -211,14 +216,85 @@ impl Server {
                     .iter()
                     .find(|a| a.account_id == s.account_id)
                     .unwrap();
+                let mut wrapped = vec![http::WrappedJson {
+                    method: 1,
+                    data: http::b64(&a.wrapped_key_set),
+                }];
+                if let Some(r) = self.recovery.get(&a.account_id) {
+                    wrapped.push(http::WrappedJson {
+                        method: 4,
+                        data: http::b64(&r.wrapped_key_set),
+                    });
+                }
                 json(&http::KeySetResponse {
                     account_id: http::b64(a.account_id.as_bytes()),
                     key_set_version: a.key_set_version,
-                    wrapped: vec![http::WrappedJson {
-                        method: 1,
-                        data: http::b64(&a.wrapped_key_set),
-                    }],
+                    wrapped,
                 })
+            }
+            Route::RecoveryPut => {
+                let s = self.session(req)?;
+                require_fresh_session(&s, self.now)?;
+                let r: http::RecoveryPutRequest = http::parse_json(body.as_bytes())?;
+                let a = self
+                    .accounts
+                    .iter()
+                    .find(|a| a.account_id == s.account_id)
+                    .unwrap();
+                let record = accept_recovery_key(
+                    a,
+                    &http::unb64(&r.verifier, 32)?,
+                    &http::unb64(&r.wrapped_key_set, 175)?,
+                )?;
+                self.recovery.insert(s.account_id, record);
+                Ok("{}".into())
+            }
+            Route::RecoveryDelete => {
+                let s = self.session(req)?;
+                require_fresh_session(&s, self.now)?;
+                self.recovery.remove(&s.account_id);
+                Ok("{}".into())
+            }
+            Route::RecoveryStart => {
+                let r: http::RecoveryStartRequest = http::parse_json(body.as_bytes())?;
+                let id = ClientIdentity::new(&r.email).unwrap();
+                let found = self
+                    .by_email(&id)
+                    .and_then(|a| Some((a, self.recovery.get(&a.account_id)?)));
+                let (account_id, wrapped) =
+                    recovery_start(found, &http::unb64(&r.auth_token, 32)?)?;
+                json(&http::RecoveryStartResponse {
+                    account_id: http::b64(account_id.as_bytes()),
+                    wrapped_key_set: http::b64(&wrapped),
+                })
+            }
+            Route::RecoveryFinish => {
+                let r: http::RecoveryFinishRequest = http::parse_json(body.as_bytes())?;
+                let id = ClientIdentity::new(&r.email).unwrap();
+                let found = self
+                    .by_email(&id)
+                    .and_then(|a| Some((a, self.recovery.get(&a.account_id)?)));
+                let upload = http::unb64(&r.upload, 1024)?;
+                let wrapped = http::unb64(&r.wrapped_key_set, 175)?;
+                let record = recovery_finish(
+                    found,
+                    &http::unb64(&r.auth_token, 32)?,
+                    &NewPassword {
+                        registration_upload: &upload,
+                        salt: AccountSalt::from_bytes(http::unb64_array(&r.salt)?),
+                        kdf: KdfParams::from(r.kdf),
+                        wrapped_key_set: &wrapped,
+                    },
+                )?;
+                self.sessions
+                    .retain(|_, s| s.account_id != record.account_id);
+                let a = self
+                    .accounts
+                    .iter_mut()
+                    .find(|a| a.account_id == record.account_id)
+                    .unwrap();
+                *a = record;
+                Ok("{}".into())
             }
             Route::AccountKeys(id) => {
                 self.session(req)?;
@@ -1131,4 +1207,144 @@ fn a_server_replaying_old_entries_is_caught() {
     server.vaults.replay_first = false;
     sync(&mut server, &mut vault, &unlocked).unwrap();
     assert_eq!(titles(&vault), ["a"]);
+}
+
+#[test]
+fn recovering_a_forgotten_password() {
+    use client_core::recovery::{
+        Recovery, has_recovery_key, new_recovery_key, recovery_status_request, remove_recovery_key,
+    };
+    use vault_core::recovery::RecoveryKey;
+    const NEW_PASSWORD: &str = "a different long passphrase";
+    const NEWER_PASSWORD: &str = "yet another long passphrase";
+
+    let mut server = Server::new();
+    let alice = sign_up(&mut server, "alice@example.com");
+    let unlocked = sign_in(
+        &mut server,
+        "alice@example.com",
+        PASSWORD,
+        &alice.secret_key,
+    )
+    .unwrap();
+    let mut vault = new_vault(&mut server, &unlocked);
+    let req = vault
+        .put_item(&unlocked, None, &login_item("a", "1"), 2)
+        .unwrap()
+        .1;
+    written(&server.send(&req)).unwrap();
+
+    // Setting up a recovery key needs a fresh session.
+    assert!(!has_recovery_key(&server.send(&recovery_status_request(&unlocked))).unwrap());
+    let (key, req) = new_recovery_key(&unlocked, "alice@example.com").unwrap();
+    written(&server.send(&req)).unwrap();
+    assert!(has_recovery_key(&server.send(&recovery_status_request(&unlocked))).unwrap());
+    let typed = key.to_display_string().to_lowercase().replace('-', " ");
+    drop(key);
+    server.now += 300_000;
+    let (_, req) = new_recovery_key(&unlocked, "alice@example.com").unwrap();
+    assert_eq!(server.send(&req).status, 403);
+    assert_eq!(server.send(&remove_recovery_key(&unlocked)).status, 403);
+
+    // A wrong key, or the right key for another address, is refused the
+    // same way as an unknown address.
+    let other = RecoveryKey::generate().unwrap().to_display_string();
+    for (email, key) in [
+        ("alice@example.com", other.as_str()),
+        ("bob@example.com", typed.as_str()),
+    ] {
+        let (r, req) = Recovery::start(email, key, &server_id()).unwrap();
+        assert_eq!(
+            r.open(&server.send(&req)).unwrap_err(),
+            ClientError::SignedOut
+        );
+    }
+    assert!(Recovery::start("alice@example.com", "BR1-nonsense", &server_id()).is_err());
+
+    // On a new device, without the Secret Key: a new one is made.
+    let (r, req) = Recovery::start("Alice@Example.com", &typed, &server_id()).unwrap();
+    let recovered = r.open(&server.send(&req)).unwrap();
+    assert_eq!(recovered.account_id(), unlocked.session.account_id());
+    let (setting, req) = recovered
+        .choose_password(NEW_PASSWORD, None, KdfParams::MIN)
+        .unwrap();
+    let (finishing, req) = setting.register(&server.send(&req)).unwrap();
+    let account = finishing.complete(&server.send(&req)).unwrap();
+    assert!(account.new_secret_key);
+    assert_eq!(account.emergency_kit().email, "alice@example.com");
+
+    // Every old session ended, and the old password and Secret Key no
+    // longer work.
+    assert_eq!(
+        sync(&mut server, &mut vault, &unlocked).unwrap_err(),
+        ClientError::SignedOut
+    );
+    assert!(
+        sign_in(
+            &mut server,
+            "alice@example.com",
+            PASSWORD,
+            &alice.secret_key
+        )
+        .is_err()
+    );
+    assert!(
+        sign_in(
+            &mut server,
+            "alice@example.com",
+            NEW_PASSWORD,
+            &alice.secret_key
+        )
+        .is_err()
+    );
+
+    // The new password opens the same key set, and the vault is intact.
+    let again = sign_in(
+        &mut server,
+        "alice@example.com",
+        NEW_PASSWORD,
+        &account.secret_key,
+    )
+    .unwrap();
+    assert_eq!(again.key_set_version, unlocked.key_set_version);
+    let mut copy = VaultReplica::new(*vault.vault_id());
+    sync(&mut server, &mut copy, &again).unwrap();
+    assert_eq!(titles(&copy), ["a"]);
+
+    // On a device that has the Secret Key, it is kept.
+    let (r, req) = Recovery::start("alice@example.com", &typed, &server_id()).unwrap();
+    let (setting, req) = r
+        .open(&server.send(&req))
+        .unwrap()
+        .choose_password(
+            NEWER_PASSWORD,
+            Some(account.secret_key.clone()),
+            KdfParams::MIN,
+        )
+        .unwrap();
+    let (finishing, req) = setting.register(&server.send(&req)).unwrap();
+    let kept = finishing.complete(&server.send(&req)).unwrap();
+    assert!(!kept.new_secret_key);
+    sign_in(
+        &mut server,
+        "alice@example.com",
+        NEWER_PASSWORD,
+        &account.secret_key,
+    )
+    .unwrap();
+
+    // Removing the key, with a fresh session, stops it working.
+    let fresh = sign_in(
+        &mut server,
+        "alice@example.com",
+        NEWER_PASSWORD,
+        &account.secret_key,
+    )
+    .unwrap();
+    written(&server.send(&remove_recovery_key(&fresh))).unwrap();
+    let (r, req) = Recovery::start("alice@example.com", &typed, &server_id()).unwrap();
+    assert_eq!(
+        r.open(&server.send(&req)).unwrap_err(),
+        ClientError::SignedOut
+    );
 }

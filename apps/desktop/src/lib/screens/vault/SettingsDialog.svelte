@@ -2,9 +2,12 @@
   import Icon from "../../components/Icon.svelte";
   import PasswordField from "../../components/PasswordField.svelte";
   import {
+    createRecoveryKey,
     errorMessage,
     helloDisable,
     helloEnable,
+    recoveryKeyStatus,
+    removeRecoveryKey,
     setSettings,
     showEmergencyKit,
     signOut,
@@ -39,6 +42,43 @@
   let askingPassword = $state(false);
   let password = $state("");
   let confirmSignOut = $state(false);
+
+  /** Whether the account has a recovery key; null until known or offline. */
+  let hasRecovery = $state<boolean | null>(null);
+  /** Which recovery change is waiting for the master password. */
+  let recoveryAction = $state<"create" | "remove" | null>(null);
+  let recoveryPassword = $state("");
+
+  $effect(() => {
+    if (offline) return;
+    recoveryKeyStatus().then(
+      (set) => (hasRecovery = set),
+      () => (hasRecovery = null),
+    );
+  });
+
+  async function changeRecovery(event: SubmitEvent) {
+    event.preventDefault();
+    if (busy || !recoveryPassword || !recoveryAction) return;
+    busy = true;
+    error = "";
+    const typed = recoveryPassword;
+    recoveryPassword = "";
+    try {
+      if (recoveryAction === "create") {
+        onkit(await createRecoveryKey(typed));
+      } else {
+        await removeRecoveryKey(typed);
+        hasRecovery = false;
+        recoveryAction = null;
+        onnotice("Recovery key removed.");
+      }
+    } catch (e) {
+      error = errorMessage(e);
+    } finally {
+      busy = false;
+    }
+  }
 
   async function toggleHello() {
     busy = true;
@@ -172,6 +212,56 @@
         <button type="button" class="btn ghost sm start" onclick={() => (askingPassword = true)}>
           Show Emergency Kit
         </button>
+      {/if}
+    </div>
+
+    <div class="setting column">
+      <div class="text">
+        <span class="name"><Icon name="shield" size={18} />Recovery key</span>
+        <span class="small">
+          {#if offline}
+            Connect to the internet to manage your recovery key.
+          {:else if hasRecovery === null}
+            Checking…
+          {:else if hasRecovery}
+            You have a recovery key. If you forget your master password, it lets you choose a new
+            one. Make a new key if you think someone else has seen yours.
+          {:else}
+            You don't have a recovery key. Without one, a forgotten master password means your
+            vaults are lost for good. Anyone with the key and your email address can open your
+            account, so keep it offline with your Emergency Kit.
+          {/if}
+        </span>
+      </div>
+      {#if recoveryAction}
+        <form class="kit-form" onsubmit={changeRecovery}>
+          <PasswordField
+            id="recovery-password"
+            label="Master password"
+            bind:value={recoveryPassword}
+            disabled={busy}
+          />
+          <button
+            type="submit"
+            class="btn"
+            class:ghost={recoveryAction === "create"}
+            class:danger={recoveryAction === "remove"}
+            disabled={busy || !recoveryPassword}
+          >
+            {#if busy}Checking…{:else if recoveryAction === "create"}Make key{:else}Remove key{/if}
+          </button>
+        </form>
+      {:else if !offline && hasRecovery !== null}
+        <div class="row">
+          <button type="button" class="btn ghost sm" onclick={() => (recoveryAction = "create")}>
+            {hasRecovery ? "Make a new recovery key" : "Make a recovery key"}
+          </button>
+          {#if hasRecovery}
+            <button type="button" class="btn ghost sm" onclick={() => (recoveryAction = "remove")}>
+              Remove
+            </button>
+          {/if}
+        </div>
       {/if}
     </div>
 

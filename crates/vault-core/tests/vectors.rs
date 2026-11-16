@@ -459,6 +459,7 @@ struct RecoveryVector {
     recovery_key_hex: String,
     recovery_key_display: String,
     account_id_hex: String,
+    email: String,
     wrapping_key_hex: String,
     auth_token_hex: String,
     auth_verifier_hex: String,
@@ -493,13 +494,14 @@ fn recovery_vectors_match() {
         hex::encode(key.wrapping_key(&account).unwrap().as_bytes()),
         v.wrapping_key_hex
     );
-    let token = key.auth_token(&account).unwrap();
+    let email = vault_core::ClientIdentity::new(&v.email).unwrap();
+    let token = key.auth_token(&email).unwrap();
     assert_eq!(hex::encode(token.as_bytes()), v.auth_token_hex);
     let verifier: [u8; 32] = hex::decode(&v.auth_verifier_hex)
         .unwrap()
         .try_into()
         .unwrap();
-    assert_eq!(key.auth_verifier(&account).unwrap(), verifier);
+    assert_eq!(key.auth_verifier(&email).unwrap(), verifier);
     assert!(check_auth_token(&verifier, token.as_bytes()));
 
     let grant = EmergencyGrant::inspect(&hex::decode(&v.grant_sample_hex).unwrap()).unwrap();

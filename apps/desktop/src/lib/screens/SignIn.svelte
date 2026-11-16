@@ -7,7 +7,12 @@
   let {
     onsignedin,
     onback,
-  }: { onsignedin: (status: AppStatus) => void; onback: () => void } = $props();
+    onforgot,
+  }: {
+    onsignedin: (status: AppStatus) => void;
+    onback: () => void;
+    onforgot: () => void;
+  } = $props();
 
   let email = $state("");
   let secretKey = $state("");
@@ -92,15 +97,20 @@
       <p class="note error" role="alert"><Icon name="alert" />{error}</p>
     {/if}
 
-    <button type="submit" class="btn primary submit" disabled={!ready}>
-      {busy ? "Signing in…" : "Sign in"}
-    </button>
+    <div class="row actions">
+      <button type="submit" class="btn primary" disabled={!ready}>
+        {busy ? "Signing in…" : "Sign in"}
+      </button>
+      <button type="button" class="link" onclick={onforgot} disabled={busy}>
+        Forgot your master password?
+      </button>
+    </div>
   </form>
 </main>
 
 <style>
-  .submit {
-    align-self: flex-start;
+  .actions {
+    gap: 20px;
   }
   input::placeholder {
     color: var(--dim);

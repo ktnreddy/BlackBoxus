@@ -4,9 +4,11 @@
 //! The server never sees a recovery key or an emergency key. It stores a
 //! hash of the recovery token, and emergency grants it cannot open.
 
-use vault_core::AccountId;
 use vault_core::recovery::{EmergencyGrant, check_auth_token};
+use vault_core::{AccountId, AccountSalt, KdfParams, UnlockMethod};
 
+use crate::api::{AccountRecord, check_wrapped_copy, check_wrapped_key_set};
+use crate::login::finish_registration;
 use crate::{Error, Result};
 
 const MS_PER_DAY: u64 = 86_400_000;
@@ -23,6 +25,115 @@ pub fn check_recovery_token(stored_verifier: &[u8; 32], presented: &[u8]) -> Res
     } else {
         Err(Error::Authentication)
     }
+}
+
+/// An account's recovery key, as the server stores it (spec section 11.2):
+/// a hash of its token, and the key set wrapped with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryRecord {
+    /// `SHA-256(auth_token)`.
+    pub verifier: [u8; 32],
+    /// The key set wrapped with method 4.
+    pub wrapped_key_set: Vec<u8>,
+}
+
+/// `PUT /v1/recovery`: checks a new recovery key for `account`. The adapter
+/// replaces any earlier one. The session must be fresh
+/// ([`crate::api::require_fresh_session`]).
+///
+/// # Errors
+///
+/// Returns [`Error::MalformedMessage`] if the verifier is not 32 bytes or
+/// the wrapped copy is not method 4 for the current key set version.
+pub fn accept_recovery_key(
+    account: &AccountRecord,
+    verifier: &[u8],
+    wrapped_key_set: &[u8],
+) -> Result<RecoveryRecord> {
+    let verifier = <[u8; 32]>::try_from(verifier).map_err(|_| Error::MalformedMessage)?;
+    check_wrapped_copy(
+        wrapped_key_set,
+        account.key_set_version,
+        UnlockMethod::Recovery,
+    )?;
+    Ok(RecoveryRecord {
+        verifier,
+        wrapped_key_set: wrapped_key_set.to_vec(),
+    })
+}
+
+/// Checks a recovery token against an account found by email address, if
+/// it has a recovery key. Unknown addresses and accounts without a recovery
+/// key fail exactly like a wrong token, after the same work.
+fn check_token<'a>(
+    found: Option<(&'a AccountRecord, &'a RecoveryRecord)>,
+    token: &[u8],
+) -> Result<(&'a AccountRecord, &'a RecoveryRecord)> {
+    match found {
+        Some((account, recovery)) => {
+            check_recovery_token(&recovery.verifier, token)?;
+            Ok((account, recovery))
+        }
+        None => {
+            // No verifier hashes to all zeros, but the work is the same.
+            let _ = check_auth_token(&[0; 32], token);
+            Err(Error::Authentication)
+        }
+    }
+}
+
+/// `POST /v1/recovery/start` (spec section 11.3, step 2): returns the
+/// account ID and the method-4 wrapped key set.
+///
+/// # Errors
+///
+/// Returns [`Error::Authentication`] for a wrong token, an unknown address,
+/// or an account without a recovery key.
+pub fn recovery_start(
+    found: Option<(&AccountRecord, &RecoveryRecord)>,
+    token: &[u8],
+) -> Result<(AccountId, Vec<u8>)> {
+    let (account, recovery) = check_token(found, token)?;
+    Ok((account.account_id, recovery.wrapped_key_set.clone()))
+}
+
+/// A new master password set during recovery.
+#[derive(Debug, Clone)]
+pub struct NewPassword<'a> {
+    /// OPAQUE registration upload.
+    pub registration_upload: &'a [u8],
+    /// New Argon2id salt.
+    pub salt: AccountSalt,
+    /// Argon2id parameters.
+    pub kdf: KdfParams,
+    /// The key set wrapped with method 1, for the current key set version.
+    pub wrapped_key_set: &'a [u8],
+}
+
+/// `POST /v1/recovery/finish` (spec section 11.3, step 3): returns the
+/// account record to store in place of the old one. The adapter MUST also
+/// end all of the account's sessions, atomically.
+///
+/// # Errors
+///
+/// As [`recovery_start`], or [`Error::MalformedMessage`] if the new
+/// password's parts are invalid.
+pub fn recovery_finish(
+    found: Option<(&AccountRecord, &RecoveryRecord)>,
+    token: &[u8],
+    new: &NewPassword<'_>,
+) -> Result<AccountRecord> {
+    let (account, _) = check_token(found, token)?;
+    new.kdf.validate().map_err(|_| Error::MalformedMessage)?;
+    let opaque_record = finish_registration(new.registration_upload)?;
+    check_wrapped_key_set(new.wrapped_key_set, account.key_set_version)?;
+    Ok(AccountRecord {
+        salt: new.salt,
+        kdf: new.kdf,
+        opaque_record,
+        wrapped_key_set: new.wrapped_key_set.to_vec(),
+        ..account.clone()
+    })
 }
 
 /// Where an emergency grant is in its life (spec section 11.5).
@@ -165,10 +276,12 @@ mod tests {
     #[test]
     fn recovery_tokens_are_checked() {
         let key = RecoveryKey::generate().unwrap();
-        let verifier = key.auth_verifier(&OWNER).unwrap();
-        let token = key.auth_token(&OWNER).unwrap();
+        let owner = vault_core::ClientIdentity::new("owner@example.com").unwrap();
+        let contact = vault_core::ClientIdentity::new("contact@example.com").unwrap();
+        let verifier = key.auth_verifier(&owner).unwrap();
+        let token = key.auth_token(&owner).unwrap();
         assert!(check_recovery_token(&verifier, token.as_bytes()).is_ok());
-        let other = key.auth_token(&CONTACT).unwrap();
+        let other = key.auth_token(&contact).unwrap();
         assert_eq!(
             check_recovery_token(&verifier, other.as_bytes()),
             Err(Error::Authentication)
@@ -222,6 +335,149 @@ mod tests {
         assert_eq!(
             stored.release(&CONTACT, 10 * MS_PER_DAY).unwrap_err(),
             Error::NotAllowed
+        );
+    }
+
+    fn account(key: &RecoveryKey, keys: &KeySet) -> (AccountRecord, RecoveryRecord) {
+        let identity = vault_core::ClientIdentity::new("owner@example.com").unwrap();
+        let wrapping = vault_core::SymmetricKey::from_bytes([5; 32]);
+        let record = AccountRecord {
+            account_id: OWNER,
+            identity: identity.clone(),
+            salt: AccountSalt::from_bytes([1; 16]),
+            kdf: KdfParams::MIN,
+            opaque_record: vec![1, 2, 3],
+            signed_bundle: keys.signed_public_bundle(&OWNER, 1).unwrap(),
+            key_set_version: 1,
+            wrapped_key_set: keys
+                .wrap(&wrapping, &OWNER, 1, UnlockMethod::MasterPassword)
+                .unwrap(),
+        };
+        let wrapped = keys
+            .wrap(
+                &key.wrapping_key(&OWNER).unwrap(),
+                &OWNER,
+                1,
+                UnlockMethod::Recovery,
+            )
+            .unwrap();
+        let verifier = key.auth_verifier(&identity).unwrap();
+        let stored = accept_recovery_key(&record, &verifier, &wrapped).unwrap();
+        (record, stored)
+    }
+
+    #[test]
+    fn setting_a_recovery_key() {
+        let key = RecoveryKey::generate().unwrap();
+        let keys = KeySet::generate().unwrap();
+        let (record, stored) = account(&key, &keys);
+        // The verifier must be 32 bytes, and the copy must be method 4 for
+        // the current key set version.
+        assert_eq!(
+            accept_recovery_key(&record, &[0; 31], &stored.wrapped_key_set),
+            Err(Error::MalformedMessage)
+        );
+        assert_eq!(
+            accept_recovery_key(&record, &stored.verifier, &record.wrapped_key_set),
+            Err(Error::MalformedMessage)
+        );
+        let newer = AccountRecord {
+            key_set_version: 2,
+            ..record
+        };
+        assert_eq!(
+            accept_recovery_key(&newer, &stored.verifier, &stored.wrapped_key_set),
+            Err(Error::MalformedMessage)
+        );
+    }
+
+    #[test]
+    fn recovering_an_account() {
+        use crate::login::OpaqueServer;
+        use vault_core::login::start_registration;
+
+        let key = RecoveryKey::generate().unwrap();
+        let keys = KeySet::generate().unwrap();
+        let (record, stored) = account(&key, &keys);
+        let token = key.auth_token(&record.identity).unwrap();
+        let wrong = RecoveryKey::generate()
+            .unwrap()
+            .auth_token(&record.identity)
+            .unwrap();
+
+        // Starting hands over the wrapped copy, which the recovery key opens.
+        let (id, wrapped) = recovery_start(Some((&record, &stored)), token.as_bytes()).unwrap();
+        assert_eq!(id, OWNER);
+        let (opened, version) = KeySet::unwrap(
+            &wrapped,
+            &key.wrapping_key(&OWNER).unwrap(),
+            &OWNER,
+            UnlockMethod::Recovery,
+            1,
+        )
+        .unwrap();
+        assert_eq!(version, 1);
+        assert_eq!(
+            opened.identity().public_key().to_bytes(),
+            keys.identity().public_key().to_bytes()
+        );
+        // A wrong token, an unknown address and an account without a
+        // recovery key all fail the same way.
+        for found in [Some((&record, &stored)), None] {
+            assert_eq!(
+                recovery_start(found, wrong.as_bytes()),
+                Err(Error::Authentication)
+            );
+        }
+        assert_eq!(
+            recovery_start(None, token.as_bytes()),
+            Err(Error::Authentication)
+        );
+
+        // Finishing sets a new password for the same key set.
+        let opaque = OpaqueServer::generate();
+        let password = vault_core::SymmetricKey::from_bytes([8; 32]);
+        let (state, request) = start_registration(&password).unwrap();
+        let response = opaque
+            .registration_response(&request, &record.identity)
+            .unwrap();
+        let upload = state
+            .finish(
+                &password,
+                &response,
+                &record.identity,
+                &vault_core::ServerIdentity::new("https://api.blackboxus.test").unwrap(),
+            )
+            .unwrap();
+        let new_unlock = vault_core::SymmetricKey::from_bytes([9; 32]);
+        let new_wrapped = keys
+            .wrap(&new_unlock, &OWNER, 1, UnlockMethod::MasterPassword)
+            .unwrap();
+        let new = NewPassword {
+            registration_upload: &upload,
+            salt: AccountSalt::from_bytes([2; 16]),
+            kdf: KdfParams::MIN,
+            wrapped_key_set: &new_wrapped,
+        };
+        assert_eq!(
+            recovery_finish(Some((&record, &stored)), wrong.as_bytes(), &new),
+            Err(Error::Authentication)
+        );
+        let updated = recovery_finish(Some((&record, &stored)), token.as_bytes(), &new).unwrap();
+        assert_eq!(updated.account_id, OWNER);
+        assert_eq!(updated.salt, AccountSalt::from_bytes([2; 16]));
+        assert_eq!(updated.wrapped_key_set, new_wrapped);
+        assert_ne!(updated.opaque_record, record.opaque_record);
+        assert_eq!(updated.signed_bundle, record.signed_bundle);
+
+        // The new copy must be method 1 for the same key set version.
+        let bad = NewPassword {
+            wrapped_key_set: &wrapped,
+            ..new
+        };
+        assert_eq!(
+            recovery_finish(Some((&record, &stored)), token.as_bytes(), &bad),
+            Err(Error::MalformedMessage)
         );
     }
 }

@@ -11,12 +11,15 @@ use serde::de::DeserializeOwned;
 use server_core::Error as CoreError;
 use server_core::api::{
     AccountRecord, Api, EnrolmentTransfer, LOGIN_ID_LEN, MAX_ENROLMENT_BYTES, NewAccount,
-    PendingLogin, SESSION_IDLE_MS, SESSION_MAX_MS, Session, accept_enrolment, session_token_hash,
-    take_enrolment,
+    PendingLogin, SESSION_IDLE_MS, SESSION_MAX_MS, Session, accept_enrolment,
+    require_fresh_session, session_token_hash, take_enrolment,
 };
 use server_core::log::MAX_ENTRY_BYTES;
 use server_core::login::OpaqueServer;
 use server_core::prelogin::FakeSaltKey;
+use server_core::recovery::{
+    NewPassword, RecoveryRecord, accept_recovery_key, recovery_finish, recovery_start,
+};
 use server_core::transparency::KtLog;
 use server_core::vaults::{
     ItemWrite, MAX_ITEMS_PAGE, MAX_LOG_PAGE, VaultRules, accept_append, accept_owner_key,
@@ -42,8 +45,10 @@ use crate::http::{
     Route, WrappedJson, b64, unb64, unb64_array,
 };
 use wire::{
-    ItemJson, ItemsResponse, LogAppendRequest, LogAppendResponse, LogResponse, SharePostRequest,
-    SharesResponse, VaultKeyPutRequest, VaultKeysResponse, VaultListResponse, VaultSummary,
+    ItemJson, ItemsResponse, LogAppendRequest, LogAppendResponse, LogResponse,
+    RecoveryFinishRequest, RecoveryPutRequest, RecoveryStartRequest, RecoveryStartResponse,
+    SharePostRequest, SharesResponse, VaultKeyPutRequest, VaultKeysResponse, VaultListResponse,
+    VaultSummary,
 };
 
 /// Largest OPAQUE message or state accepted from a client or storage.
@@ -190,6 +195,20 @@ async fn handle(req: &mut Request, env: &Env, now: u64) -> Answer {
         Route::VaultKeys(v) => vault_keys(req, &db, api, &v, now).await,
         Route::SharePost => share_post(req, &db, api, now).await,
         Route::Shares => shares(req, &db, api, now).await,
+        Route::RecoveryPut => recovery_put(req, &db, api, now).await,
+        Route::RecoveryDelete => {
+            let session = authenticate(req, &db, api, now).await?;
+            require_fresh_session(&session, now)?;
+            exec(
+                &db,
+                "DELETE FROM recovery WHERE account_id = ?1",
+                &[text(&b64(session.account_id.as_bytes()))],
+            )
+            .await?;
+            Ok("{}".into())
+        }
+        Route::RecoveryStart => recovery_start_handler(req, &db, &ip, now).await,
+        Route::RecoveryFinish => recovery_finish_handler(req, &db, &ip, now).await,
         Route::NotImplemented => Err(ApiError::NotImplemented),
     }
 }
@@ -406,14 +425,163 @@ async fn key_set(req: &Request, db: &D1Database, api: &Api, now: u64) -> Answer 
     )
     .await?
     .ok_or(ApiError::Storage)?;
+    let mut wrapped = vec![WrappedJson {
+        method: 1,
+        data: row.wrapped_key_set,
+    }];
+    if let Some(recovery) = recovery_by_account(db, &session.account_id).await? {
+        wrapped.push(WrappedJson {
+            method: 4,
+            data: b64(&recovery.wrapped_key_set),
+        });
+    }
     json(&KeySetResponse {
         account_id: b64(session.account_id.as_bytes()),
         key_set_version: row.key_set_version,
-        wrapped: vec![WrappedJson {
-            method: 1,
-            data: row.wrapped_key_set,
-        }],
+        wrapped,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Recovery
+
+#[derive(Deserialize)]
+struct RecoveryRow {
+    verifier: String,
+    wrapped_key_set: String,
+}
+
+async fn recovery_by_account(
+    db: &D1Database,
+    account: &AccountId,
+) -> Result<Option<RecoveryRecord>, ApiError> {
+    let row: Option<RecoveryRow> = first(
+        db,
+        "SELECT verifier, wrapped_key_set FROM recovery WHERE account_id = ?1",
+        &[text(&b64(account.as_bytes()))],
+    )
+    .await?;
+    row.map(|r| {
+        Ok(RecoveryRecord {
+            verifier: unb64_array(&r.verifier)?,
+            wrapped_key_set: unb64(&r.wrapped_key_set, WRAPPED_KEY_SET_LEN)?,
+        })
+    })
+    .transpose()
+}
+
+async fn recovery_put(req: &mut Request, db: &D1Database, api: &Api, now: u64) -> Answer {
+    let session = authenticate(req, db, api, now).await?;
+    require_fresh_session(&session, now)?;
+    let r: RecoveryPutRequest = body(req).await?;
+    let account = account_by_id(db, &session.account_id)
+        .await?
+        .ok_or(ApiError::Storage)?;
+    let record = accept_recovery_key(
+        &account,
+        &unb64(&r.verifier, 32)?,
+        &unb64(&r.wrapped_key_set, WRAPPED_KEY_SET_LEN)?,
+    )?;
+    exec(
+        db,
+        "INSERT INTO recovery (account_id, verifier, wrapped_key_set) VALUES (?1, ?2, ?3) \
+         ON CONFLICT (account_id) DO UPDATE SET verifier = excluded.verifier, \
+         wrapped_key_set = excluded.wrapped_key_set",
+        &[
+            text(&b64(session.account_id.as_bytes())),
+            text(&b64(&record.verifier)),
+            text(&b64(&record.wrapped_key_set)),
+        ],
+    )
+    .await?;
+    Ok("{}".into())
+}
+
+/// The account and recovery key for an address, applying the per-address
+/// recovery limit whether or not it exists.
+async fn recovery_for(
+    db: &D1Database,
+    email: &str,
+    ip: &str,
+    now: u64,
+) -> Result<Option<(AccountRecord, RecoveryRecord)>, ApiError> {
+    let identity = identity(email)?;
+    limit(db, &http::LOGIN_PER_IP, ip.as_bytes(), now).await?;
+    limit(db, &http::RECOVERY_PER_ADDRESS, identity.as_bytes(), now).await?;
+    let Some(account) = account_by_email(db, &identity).await? else {
+        return Ok(None);
+    };
+    Ok(recovery_by_account(db, &account.account_id)
+        .await?
+        .map(|r| (account, r)))
+}
+
+async fn recovery_start_handler(req: &mut Request, db: &D1Database, ip: &str, now: u64) -> Answer {
+    let r: RecoveryStartRequest = body(req).await?;
+    let found = recovery_for(db, &r.email, ip, now).await?;
+    let (account_id, wrapped) = recovery_start(
+        found.as_ref().map(|(a, r)| (a, r)),
+        &unb64(&r.auth_token, 32)?,
+    )?;
+    json(&RecoveryStartResponse {
+        account_id: b64(account_id.as_bytes()),
+        wrapped_key_set: b64(&wrapped),
+    })
+}
+
+async fn recovery_finish_handler(req: &mut Request, db: &D1Database, ip: &str, now: u64) -> Answer {
+    let r: RecoveryFinishRequest = body(req).await?;
+    let found = recovery_for(db, &r.email, ip, now).await?;
+    let upload = unb64(&r.upload, MAX_OPAQUE_BYTES)?;
+    let wrapped = unb64(&r.wrapped_key_set, WRAPPED_KEY_SET_LEN)?;
+    let record = recovery_finish(
+        found.as_ref().map(|(a, r)| (a, r)),
+        &unb64(&r.auth_token, 32)?,
+        &NewPassword {
+            registration_upload: &upload,
+            salt: AccountSalt::from_bytes(unb64_array(&r.salt)?),
+            kdf: KdfParams::from(r.kdf),
+            wrapped_key_set: &wrapped,
+        },
+    )?;
+    let account_id = text(&b64(record.account_id.as_bytes()));
+    // The new password replaces the old one and every session ends, in one
+    // transaction. Pending logins for the old password are dropped too.
+    let statements = vec![
+        stmt(
+            db,
+            "UPDATE accounts SET salt = ?2, kdf_m = ?3, kdf_t = ?4, kdf_p = ?5, \
+             opaque_record = ?6, wrapped_key_set = ?7 WHERE account_id = ?1",
+            &[
+                account_id.clone(),
+                text(&b64(record.salt.as_bytes())),
+                num(u64::from(record.kdf.memory_kib)),
+                num(u64::from(record.kdf.iterations)),
+                num(u64::from(record.kdf.parallelism)),
+                text(&b64(&record.opaque_record)),
+                text(&b64(&record.wrapped_key_set)),
+            ],
+        )?,
+        stmt(
+            db,
+            "DELETE FROM sessions WHERE account_id = ?1",
+            core::slice::from_ref(&account_id),
+        )?,
+        stmt(
+            db,
+            "DELETE FROM logins WHERE account_id = ?1",
+            core::slice::from_ref(&account_id),
+        )?,
+        // Someone who forgot their password has often locked their address
+        // with failed attempts; the new password should work right away.
+        stmt(
+            db,
+            "DELETE FROM limits WHERE key = ?1",
+            &[text(&http::LOGIN_FAILURES.key(record.identity.as_bytes()))],
+        )?,
+    ];
+    db.batch(statements).await.map_err(storage)?;
+    Ok("{}".into())
 }
 
 #[derive(Deserialize)]

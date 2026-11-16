@@ -42,7 +42,7 @@ results["Display format"] = len(digits) == 54 and display == v["recovery_key_dis
 
 acct = h("account_id_hex")
 results["Wrapping key"] = hkdf(acct, key, b"BlackBoxus v1 recovery-wrap") == h("wrapping_key_hex")
-token = hkdf(acct, key, b"BlackBoxus v1 recovery-auth")
+token = hkdf(v["email"].encode(), key, b"BlackBoxus v1 recovery-auth")
 results["Auth token"] = token == h("auth_token_hex")
 results["Auth verifier"] = hashlib.sha256(token).digest() == h("auth_verifier_hex")
 

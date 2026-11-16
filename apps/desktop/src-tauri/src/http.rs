@@ -73,6 +73,13 @@ impl Transport for Https {
                 }
                 r.call()
             }
+            (Method::Delete, _) => {
+                let mut r = self.agent.delete(&url);
+                if let Some(auth) = &request.authorization {
+                    r = r.header("Authorization", auth);
+                }
+                r.call()
+            }
             (method, body) => {
                 let mut r = match method {
                     Method::Put => self.agent.put(&url),

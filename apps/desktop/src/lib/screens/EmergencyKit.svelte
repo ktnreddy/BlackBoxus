@@ -6,8 +6,16 @@
   let {
     kit,
     again = false,
+    step = "Step 2 of 3",
     ondone,
-  }: { kit: EmergencyKit; again?: boolean; ondone: () => void } = $props();
+  }: {
+    kit: EmergencyKit;
+    /** Shown again from settings: no need to confirm it was saved. */
+    again?: boolean;
+    /** Where this is in a longer flow, if anywhere. */
+    step?: string | null;
+    ondone: () => void;
+  } = $props();
 
   let saved = $state(false);
   const created = new Date().toLocaleDateString(undefined, {
@@ -20,8 +28,8 @@
 <TopNav>
   {#if again}
     <button type="button" class="btn ghost sm" onclick={ondone}>Done</button>
-  {:else}
-    <span class="small">Step 2 of 3</span>
+  {:else if step}
+    <span class="small">{step}</span>
   {/if}
 </TopNav>
 
@@ -31,9 +39,19 @@
       {again ? "Your" : "Save your"}<br /><span class="hi">Emergency Kit.</span>
     </h1>
     <p class="lede">
-      Your Secret Key and your master password together unlock your account on a new device. Keep
-      this kit somewhere safe and offline, like a drawer at home.
+      Your Secret Key and your master password together unlock your account on a new device.
+      {#if kit.recovery_key}
+        Your recovery key lets you set a new master password if you forget it, so anyone with this
+        kit and your email address can open your account.
+      {/if}
+      Keep this kit somewhere safe and offline, like a drawer at home.
     </p>
+    {#if kit.recovery_key}
+      <p class="note">
+        <Icon name="alert" />
+        <span>This is the only time your recovery key is shown. Print or save the kit now.</span>
+      </p>
+    {/if}
     <ul class="checks">
       <li><span class="good"><Icon name="check" /></span>Print it, or save it as a PDF on a USB drive</li>
       <li><span class="bad"><Icon name="x" /></span>Don't email it to yourself or keep it in the cloud</li>
@@ -68,6 +86,12 @@
         <div><dt>Email</dt><dd class="selectable">{kit.email}</dd></div>
         <div><dt>Server</dt><dd class="selectable">{kit.server}</dd></div>
         <div><dt>Secret Key</dt><dd class="mono key selectable">{kit.secret_key}</dd></div>
+        {#if kit.recovery_key}
+          <div>
+            <dt>Recovery key</dt>
+            <dd class="mono key selectable">{kit.recovery_key}</dd>
+          </div>
+        {/if}
         <div>
           <dt>Master password</dt>
           <dd class="write-in"></dd>

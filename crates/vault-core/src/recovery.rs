@@ -8,6 +8,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::aead::{self, NONCE_LEN};
 use crate::error::{Error, Result, SecretKeyError};
+use crate::identity::ClientIdentity;
 use crate::key::{KEY_LEN, SymmetricKey};
 use crate::keyset::{ACCOUNT_ID_LEN, AccountId, KeySet, PublicKeyBundle};
 use crate::random;
@@ -167,9 +168,9 @@ impl RecoveryKey {
         ]
     }
 
-    fn derive(&self, account_id: &AccountId, label: &[u8]) -> Result<SymmetricKey> {
+    fn derive(&self, salt: &[u8], label: &[u8]) -> Result<SymmetricKey> {
         let mut key = SymmetricKey::zeroed();
-        Hkdf::<Sha256>::new(Some(account_id.as_bytes()), &self.0)
+        Hkdf::<Sha256>::new(Some(salt), &self.0)
             .expand(label, key.as_mut_bytes())
             .map_err(|_| Error::KeyDerivation)?;
         Ok(key)
@@ -181,16 +182,19 @@ impl RecoveryKey {
     ///
     /// Returns [`Error::KeyDerivation`] if HKDF fails.
     pub fn wrapping_key(&self, account_id: &AccountId) -> Result<SymmetricKey> {
-        self.derive(account_id, LABEL_WRAP)
+        self.derive(account_id.as_bytes(), LABEL_WRAP)
     }
 
-    /// The token presented to the server to start recovery.
+    /// The token presented to the server to start recovery. Bound to the
+    /// account's canonical email address rather than its ID, because a
+    /// device recovering an account does not know the ID until the server
+    /// accepts the token.
     ///
     /// # Errors
     ///
     /// Returns [`Error::KeyDerivation`] if HKDF fails.
-    pub fn auth_token(&self, account_id: &AccountId) -> Result<SymmetricKey> {
-        self.derive(account_id, LABEL_AUTH)
+    pub fn auth_token(&self, email: &ClientIdentity) -> Result<SymmetricKey> {
+        self.derive(email.as_bytes(), LABEL_AUTH)
     }
 
     /// `SHA-256(auth_token)`: what the server stores to check the token.
@@ -198,8 +202,8 @@ impl RecoveryKey {
     /// # Errors
     ///
     /// Returns [`Error::KeyDerivation`] if HKDF fails.
-    pub fn auth_verifier(&self, account_id: &AccountId) -> Result<[u8; 32]> {
-        Ok(auth_verifier_for(&self.auth_token(account_id)?))
+    pub fn auth_verifier(&self, email: &ClientIdentity) -> Result<[u8; 32]> {
+        Ok(auth_verifier_for(&self.auth_token(email)?))
     }
 }
 
@@ -491,15 +495,20 @@ mod tests {
         let key = RecoveryKey::generate().unwrap();
         let a = AccountId::from_bytes([1; 16]);
         let b = AccountId::from_bytes([2; 16]);
-        assert_ne!(key.wrapping_key(&a).unwrap(), key.auth_token(&a).unwrap());
+        let alice = ClientIdentity::new("alice@example.com").unwrap();
+        let bob = ClientIdentity::new("bob@example.com").unwrap();
         assert_ne!(key.wrapping_key(&a).unwrap(), key.wrapping_key(&b).unwrap());
+        assert_ne!(
+            key.wrapping_key(&a).unwrap(),
+            key.auth_token(&alice).unwrap()
+        );
 
-        let token = key.auth_token(&a).unwrap();
-        let verifier = key.auth_verifier(&a).unwrap();
+        let token = key.auth_token(&alice).unwrap();
+        let verifier = key.auth_verifier(&alice).unwrap();
         assert!(check_auth_token(&verifier, token.as_bytes()));
         assert!(!check_auth_token(
             &verifier,
-            key.auth_token(&b).unwrap().as_bytes()
+            key.auth_token(&bob).unwrap().as_bytes()
         ));
         assert!(!check_auth_token(&verifier, &[]));
     }

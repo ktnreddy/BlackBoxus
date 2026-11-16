@@ -29,11 +29,13 @@ From the recovery key, the client derives:
 
 ```
 wrapping_key = HKDF-SHA-256(salt = account_id, IKM = key, info = "BlackBoxus v1 recovery-wrap", L = 32)
-auth_token   = HKDF-SHA-256(salt = account_id, IKM = key, info = "BlackBoxus v1 recovery-auth", L = 32)
+auth_token   = HKDF-SHA-256(salt = email, IKM = key, info = "BlackBoxus v1 recovery-auth", L = 32)
 auth_verifier = SHA-256(auth_token)
 ```
 
-When the user creates a recovery key, the client wraps the key set with `wrapping_key` using method 4, and uploads the wrapped copy and `auth_verifier`. The client shows the recovery key once, offers to print it in the Emergency Kit (Section 3.7), and then erases it.
+`email` is the canonical email address (Section 4.3), as UTF-8. The token is bound to the address rather than the account ID because a device recovering an account does not know the ID until the server has accepted the token.
+
+When the user creates a recovery key, the client wraps the key set with `wrapping_key` using method 4, and uploads the wrapped copy and `auth_verifier`. This needs a session less than five minutes old (Section 12.7), so a stolen session token cannot replace or remove the recovery key; clients ask for the master password and sign in again first. The client shows the recovery key once, offers to print it in the Emergency Kit (Section 3.7), and then erases it.
 
 The user can replace or remove the recovery key at any time; the server MUST then delete the old wrapped copy and verifier.
 
@@ -41,7 +43,7 @@ The user can replace or remove the recovery key at any time; the server MUST the
 
 1. The user enters their email address and recovery key. The Secret Key is not needed: if the device does not have it, the client generates a new one in step 3 and shows a new Emergency Kit. The account ID returned in step 2 comes from the server, but a wrong one only makes unwrapping fail.
 2. The client sends `auth_token` to the server. The server compares `SHA-256(auth_token)` with the stored verifier in constant time, rate-limits attempts per account, and on success returns the method-4 wrapped key set.
-3. The client unwraps the key set, then the user chooses a new master password. The client derives new keys from it and the Secret Key (Section 3.5), registers with OPAQUE (Section 4.4), wraps the key set again with method 1, and uploads it with `recovery/finish` (Section 12.6). The server MUST end all other sessions and notify the user by email. Other devices that held an old Secret Key must be added again (Section 10).
+3. The client unwraps the key set, then the user chooses a new master password. The client derives new keys from it and the Secret Key (Section 3.5), registers with OPAQUE (Section 4.4), wraps the key set again with method 1, and uploads it with `recovery/finish` (Section 12.6). The server MUST end all sessions, and SHOULD notify the user by email once the service can send email (Section 12.9); until then, other devices find themselves signed out and the old password no longer works. Other devices that held an old Secret Key must be added again (Section 10).
 4. The client SHOULD then create a new recovery key, because the old one has been typed on this device.
 
 `auth_token` only proves the user holds the recovery key so the server will hand over the wrapped copy; it cannot decrypt anything. The wrapped copy alone is useless to the server: it needs the 256-bit recovery key.

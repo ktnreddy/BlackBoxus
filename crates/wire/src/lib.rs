@@ -309,3 +309,50 @@ pub struct SharesResponse {
     /// Shares addressed to this account.
     pub shares: Vec<String>,
 }
+
+/// `PUT /v1/recovery`
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryPutRequest {
+    /// `SHA-256(auth_token)`.
+    pub verifier: String,
+    /// Key set wrapped with method 4.
+    pub wrapped_key_set: String,
+}
+
+/// `POST /v1/recovery/start`
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryStartRequest {
+    /// Email address.
+    pub email: String,
+    /// The recovery token derived from the recovery key.
+    pub auth_token: String,
+}
+
+/// Answer to `POST /v1/recovery/start`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RecoveryStartResponse {
+    /// The account's ID. A wrong value only makes unwrapping fail.
+    pub account_id: String,
+    /// Key set wrapped with method 4.
+    pub wrapped_key_set: String,
+}
+
+/// `POST /v1/recovery/finish`
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryFinishRequest {
+    /// Email address.
+    pub email: String,
+    /// The recovery token derived from the recovery key.
+    pub auth_token: String,
+    /// OPAQUE registration upload for the new master password.
+    pub upload: String,
+    /// New Argon2id salt.
+    pub salt: String,
+    /// Argon2id parameters.
+    pub kdf: KdfJson,
+    /// Key set wrapped with method 1 under the new master password.
+    pub wrapped_key_set: String,
+}
