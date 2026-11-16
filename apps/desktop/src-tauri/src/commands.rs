@@ -415,8 +415,7 @@ pub(crate) async fn share_vault(
 ) -> Result<Vec<MemberView>, AppError> {
     let id = vault_id(&vault)?;
     let role = match role.as_str() {
-        "editor" => vault_core::log::Role::Editor,
-        "viewer" => vault_core::log::Role::Viewer,
+        "editor" | "viewer" => role_from(&role)?,
         _ => return Err(AppError::Internal),
     };
     blocking(app, move |state| {
@@ -667,6 +666,66 @@ pub(crate) async fn sign_out(app: AppHandle) -> Result<AppStatus, AppError> {
         state.storage.remove_account(&record)?;
         state.forget_account();
         Ok(state.status())
+    })
+    .await
+}
+
+fn role_from(text: &str) -> Result<vault_core::log::Role, AppError> {
+    match text {
+        "owner" => Ok(vault_core::log::Role::Owner),
+        "editor" => Ok(vault_core::log::Role::Editor),
+        "viewer" => Ok(vault_core::log::Role::Viewer),
+        _ => Err(AppError::Internal),
+    }
+}
+
+/// Changes a member's role.
+#[tauri::command]
+pub(crate) async fn change_member_role(
+    app: AppHandle,
+    vault: String,
+    sharing_id: String,
+    role: String,
+) -> Result<Vec<MemberView>, AppError> {
+    let id = vault_id(&vault)?;
+    let role = role_from(&role)?;
+    blocking(app, move |state| {
+        state.require_online()?;
+        state.with_session(|s| {
+            s.vaults
+                .change_role(&state.transport, &s.unlocked, id, &sharing_id, role)?;
+            s.vaults.members(&id, &s.unlocked)
+        })
+    })
+    .await
+}
+
+/// Removes a member and replaces the vault key.
+#[tauri::command]
+pub(crate) async fn remove_member(
+    app: AppHandle,
+    vault: String,
+    sharing_id: String,
+) -> Result<Vec<MemberView>, AppError> {
+    let id = vault_id(&vault)?;
+    blocking(app, move |state| {
+        state.require_online()?;
+        state.with_session(|s| {
+            s.vaults
+                .remove_member(&state.transport, &s.unlocked, id, &sharing_id)?;
+            s.vaults.members(&id, &s.unlocked)
+        })
+    })
+    .await
+}
+
+/// Leaves a vault shared with this account.
+#[tauri::command]
+pub(crate) async fn leave_vault(app: AppHandle, vault: String) -> Result<(), AppError> {
+    let id = vault_id(&vault)?;
+    blocking(app, move |state| {
+        state.require_online()?;
+        state.with_session(|s| s.vaults.leave(&state.transport, &s.unlocked, id))
     })
     .await
 }

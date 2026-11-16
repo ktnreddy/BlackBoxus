@@ -90,12 +90,12 @@ Limits per email address apply equally to addresses without an account, so they 
 | `GET /v1/accounts/self/leaves` | → `{leaves: [{leaf, leaf_index, inclusion_proof}], signed_tree_head}` | All leaves for this account, for self-monitoring (9.5). |
 | `PUT /v1/enrolment/{session_id}` | `{sealed}` → `{}` | 96 to 8192 bytes; no transfer already stored under this ID (10.3). |
 | `GET /v1/vaults` | → `{vaults: [{vault_id, head_seq}]}` | Vaults this account may read (12.8). |
-| `POST /v1/vaults/{vault_id}/log` | `{entry, envelope?}` → `{seq}` | Entry is at most 4096 bytes, parses, is for this vault, is authored by this account and extends the current head (8.6). The first entry must create the vault, which makes its author able to read it. A `PutItem` entry carries its envelope, which must be within the size limits (6.4), name this vault, item and revision, and match the entry's envelope hash; other entries carry none. Entry and item change are stored atomically. |
+| `POST /v1/vaults/{vault_id}/log` | `{entry, envelope?}` → `{seq}` | Entry is at most 4096 bytes, parses, is for this vault, is authored by this account, extends the current head and follows the log's rules (8.6). The first entry must create the vault. Adding a member lets them read the vault; removing one stops them reading it and drops their wrapped keys and pending shares for it. A `PutItem` entry carries its envelope, which must be within the size limits (6.4), name this vault, item and revision, and match the entry's envelope hash; other entries carry none. Entry and item change are stored atomically. |
 | `GET /v1/vaults/{vault_id}/log?from={seq}` | → `{entries: [...], more}` | Account may read this vault. At most 200 entries per response. |
 | `GET /v1/vaults/{vault_id}/items?after={seq}` | → `{items: [{item_id, revision, envelope?, seq}], more}` | Account may read this vault. The current envelope of each item changed by an entry after `seq` (all items without `after`), ordered by `seq`; deleted items have no envelope. At most 200 per response. |
-| `PUT /v1/vaults/{vault_id}/keys` | `{wrapped}` → `{}` | Account may read this vault; the key is 94 bytes and wrapped for this vault (7.3). Stored per account and key version. |
+| `PUT /v1/vaults/{vault_id}/keys` | `{wrapped}` → `{}` | Account is a member of this vault; the key is 94 bytes and wrapped for this vault (7.3). Stored per account and key version. |
 | `GET /v1/vaults/{vault_id}/keys` | → `{keys: [...]}` | This account's wrapped copies of the vault key. |
-| `POST /v1/shares` | `{share}` → `{}` | Share is 4627 bytes, its sender is this account, the sender may read the vault, and the recipient is someone else (7.4). Records the recipient as allowed to read the vault. |
+| `POST /v1/shares` | `{share}` → `{}` | Share is 4627 bytes, its sender is this account and an owner of the vault, and the recipient is another member (7.4). Members are added to the log before their share is sent. |
 | `GET /v1/shares` | → `{shares: [...]}` | Shares addressed to this account. |
 | `PUT /v1/recovery` | `{verifier, wrapped_key_set}` → `{}` | Wrapped key set uses method 4. Replaces any earlier recovery key (11.2). |
 | `PUT /v1/emergency` | `{grant}` → `{}` | Grant is 4609 bytes and its owner is this account (11.4). |
@@ -105,7 +105,9 @@ Limits per email address apply equally to addresses without an account, so they 
 
 ## 12.8 Vault access
 
-The server cannot check vault roles, because they are defined by the signed revision log (Section 8), which clients verify. It only filters who may **read** a vault, to limit what one account can download: the account that created the vault's first log entry, any account a share for that vault was uploaded to, and a trusted contact whose emergency grant for one of those accounts has been released (11.5). Any account that may read a vault may append to its log; clients reject entries whose authors lack the role (8.4).
+Vault roles are defined by the signed revision log (Section 8), which clients verify. The server applies the same rules to every append (8.6), and lets only the vault's current members read it, plus a trusted contact whose emergency grant for a member has been released (11.5). Only members may append, and only as their role allows.
+
+Vaults stored before the server kept this state have it rebuilt from their log on their next append, when read access is also brought in line with the members.
 
 ## 12.9 Security considerations
 

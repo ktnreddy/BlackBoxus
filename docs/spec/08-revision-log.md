@@ -103,9 +103,12 @@ When a client appends an entry, the server MUST, atomically:
 
 - check that `seq` is the current head's `seq` plus 1 (or 0 for a new vault) and `prev_hash` is the current head's hash;
 - reject entries larger than 4096 bytes;
-- store the entry and update the head.
+- check that the session's account is the entry's author, and apply the rules of Section 8.3 to it, against the vault's state at the head;
+- store the entry and update the head and that state.
 
-A write that loses a race is rejected; the client re-reads the log, re-applies its change and tries again. The server does not check signatures or permissions; clients do.
+The server keeps only what the rules need: the members with their roles and key set versions, the vault key version, whether a key replacement is due, and each item's revision. It authenticates authors by their session, so it does not check signatures; clients still check everything themselves (Section 8.4), so a server that skips these checks cannot forge anything. What the server's checks add is availability: a viewer or a removed member cannot append an entry that every client would reject, which would stop the vault accepting changes.
+
+A write that loses a race is rejected; the client re-reads the log, re-applies its change and tries again.
 
 ## 8.7 Security considerations
 

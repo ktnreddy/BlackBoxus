@@ -19,7 +19,8 @@ use server_core::login::OpaqueServer;
 use server_core::prelogin::FakeSaltKey;
 use server_core::transparency::KtLog;
 use server_core::vaults::{
-    ItemWrite, MAX_ITEMS_PAGE, MAX_LOG_PAGE, accept_append, accept_owner_key, accept_share,
+    ItemWrite, MAX_ITEMS_PAGE, MAX_LOG_PAGE, VaultRules, accept_append, accept_owner_key,
+    accept_share, touched_item,
 };
 use vault_core::log::Checkpoint;
 use vault_core::{
@@ -50,6 +51,9 @@ const MAX_OPAQUE_BYTES: usize = 1024;
 
 /// Largest stored key transparency tree (D1 rows are limited to 2 MB).
 const MAX_TREE_TEXT: usize = 2_000_000;
+
+/// Largest stored vault rules (about 18,000 members).
+const MAX_RULES_BYTES: usize = 1_000_000;
 
 /// Sessions are written back at most this often when used.
 const SESSION_TOUCH_MS: u64 = 3_600_000;
@@ -573,6 +577,64 @@ struct HeadRow {
     hash: String,
 }
 
+#[derive(Deserialize)]
+struct RulesRow {
+    rules: String,
+}
+
+#[derive(Deserialize)]
+struct EntryRow {
+    entry: String,
+}
+
+/// A vault's rules, current at its log's head, or `None` if the vault does
+/// not exist. The second value is `true` if they were rebuilt from the log
+/// because the stored copy was missing or behind, in which case read access
+/// should be brought in line with them.
+async fn load_rules(
+    db: &D1Database,
+    vault_id: &VaultId,
+) -> Result<(Option<VaultRules>, bool), ApiError> {
+    let vault = b64(vault_id.as_bytes());
+    let head: Option<HeadRow> = first(
+        db,
+        "SELECT seq, hash FROM vault_log WHERE vault_id = ?1 ORDER BY seq DESC LIMIT 1",
+        &[text(&vault)],
+    )
+    .await?;
+    let Some(head) = head else {
+        return Ok((None, false));
+    };
+    let head = Checkpoint {
+        seq: head.seq,
+        hash: unb64_array(&head.hash)?,
+    };
+    let stored: Option<RulesRow> = first(
+        db,
+        "SELECT rules FROM vault_rules WHERE vault_id = ?1",
+        &[text(&vault)],
+    )
+    .await?;
+    if let Some(row) = stored
+        && let Ok(rules) = VaultRules::decode(vault_id, &unb64(&row.rules, MAX_RULES_BYTES)?)
+        && *rules.head() == head
+    {
+        return Ok((Some(rules), false));
+    }
+    let rows: Vec<EntryRow> = all(
+        db,
+        "SELECT entry FROM vault_log WHERE vault_id = ?1 ORDER BY seq",
+        &[text(&vault)],
+    )
+    .await?;
+    let entries = rows
+        .iter()
+        .map(|r| unb64(&r.entry, MAX_ENTRY_BYTES))
+        .collect::<Result<Vec<_>, _>>()?;
+    let rules = VaultRules::rebuild(vault_id, &entries).map_err(|_| ApiError::Storage)?;
+    Ok((Some(rules), true))
+}
+
 async fn log_append(
     req: &mut Request,
     db: &D1Database,
@@ -590,46 +652,93 @@ async fn log_append(
         .transpose()?;
     let vault = b64(vault_id.as_bytes());
     let account = b64(session.account_id.as_bytes());
-    let head: Option<HeadRow> = first(
-        db,
-        "SELECT seq, hash FROM vault_log WHERE vault_id = ?1 ORDER BY seq DESC LIMIT 1",
-        &[text(&vault)],
-    )
-    .await?;
-    let head = head
-        .map(|h| {
-            Ok::<_, ApiError>(Checkpoint {
-                seq: h.seq,
-                hash: unb64_array(&h.hash)?,
+    let (rules, rebuilt) = load_rules(db, vault_id).await?;
+    // An item change is checked against the item's stored revision.
+    let rules = match (rules, touched_item(&entry)?) {
+        (Some(r), Some(item_id)) => {
+            #[derive(Deserialize)]
+            struct StoredItem {
+                revision: u64,
+                deleted: u8,
+            }
+            let stored: Option<StoredItem> = first(
+                db,
+                "SELECT revision, envelope IS NULL AS deleted FROM vault_items \
+                 WHERE vault_id = ?1 AND item_id = ?2",
+                &[text(&vault), text(&b64(item_id.as_bytes()))],
+            )
+            .await?;
+            Some(match stored {
+                Some(i) => r.with_item(item_id, i.revision, i.deleted != 0),
+                None => r,
             })
-        })
-        .transpose()?;
-    let readable = head.is_some() && may_read(db, &vault, &account).await?;
+        }
+        (rules, _) => rules,
+    };
     let accepted = accept_append(
         vault_id,
-        head.as_ref(),
-        readable,
+        rules,
         &session.account_id,
         &entry,
         envelope.as_deref(),
     )?;
     let seq = accepted.checkpoint.seq;
-    let mut statements = vec![stmt(
-        db,
-        "INSERT INTO vault_log (vault_id, seq, entry, hash) VALUES (?1, ?2, ?3, ?4)",
-        &[
-            text(&vault),
-            num(seq),
-            text(&b64(&entry)),
-            text(&b64(&accepted.checkpoint.hash)),
-        ],
-    )?];
+    let mut statements = vec![
+        stmt(
+            db,
+            "INSERT INTO vault_log (vault_id, seq, entry, hash) VALUES (?1, ?2, ?3, ?4)",
+            &[
+                text(&vault),
+                num(seq),
+                text(&b64(&entry)),
+                text(&b64(&accepted.checkpoint.hash)),
+            ],
+        )?,
+        stmt(
+            db,
+            "INSERT INTO vault_rules (vault_id, rules) VALUES (?1, ?2) \
+             ON CONFLICT (vault_id) DO UPDATE SET rules = excluded.rules",
+            &[text(&vault), text(&b64(&accepted.rules.encode()))],
+        )?,
+    ];
     if accepted.creates_vault {
         statements.push(stmt(
             db,
             "INSERT INTO vault_access (vault_id, account_id) VALUES (?1, ?2)",
             &[text(&vault), text(&account)],
         )?);
+    }
+    if rebuilt {
+        // Access granted before the server kept rules: only members keep it.
+        statements.push(stmt(
+            db,
+            "DELETE FROM vault_access WHERE vault_id = ?1",
+            &[text(&vault)],
+        )?);
+        for member in accepted.rules.members() {
+            statements.push(stmt(
+                db,
+                "INSERT OR IGNORE INTO vault_access (vault_id, account_id) VALUES (?1, ?2)",
+                &[text(&vault), text(&b64(member.as_bytes()))],
+            )?);
+        }
+    }
+    if let Some(added) = accepted.added {
+        statements.push(stmt(
+            db,
+            "INSERT OR IGNORE INTO vault_access (vault_id, account_id) VALUES (?1, ?2)",
+            &[text(&vault), text(&b64(added.as_bytes()))],
+        )?);
+    }
+    if let Some(removed) = accepted.removed {
+        let removed = b64(removed.as_bytes());
+        for sql in [
+            "DELETE FROM vault_access WHERE vault_id = ?1 AND account_id = ?2",
+            "DELETE FROM vault_keys WHERE vault_id = ?1 AND account_id = ?2",
+            "DELETE FROM shares WHERE vault_id = ?1 AND recipient = ?2",
+        ] {
+            statements.push(stmt(db, sql, &[text(&vault), text(&removed)])?);
+        }
     }
     let upsert = "INSERT INTO vault_items (vault_id, item_id, revision, envelope, seq) \
                   VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (vault_id, item_id) DO UPDATE SET \
@@ -665,11 +774,6 @@ async fn log_append(
     }
     db.batch(statements).await.map_err(storage)?;
     json(&LogAppendResponse { seq })
-}
-
-#[derive(Deserialize)]
-struct EntryRow {
-    entry: String,
 }
 
 async fn log_read(
@@ -753,7 +857,11 @@ async fn vault_key_put(
     let wrapped = unb64(&r.wrapped, OWNER_WRAPPED_VAULT_KEY_LEN)?;
     let vault = b64(vault_id.as_bytes());
     let account = b64(session.account_id.as_bytes());
-    let version = accept_owner_key(vault_id, may_read(db, &vault, &account).await?, &wrapped)?;
+    let is_member = load_rules(db, vault_id)
+        .await?
+        .0
+        .is_some_and(|r| r.role(&session.account_id).is_some());
+    let version = accept_owner_key(vault_id, is_member, &wrapped)?;
     exec(
         db,
         "INSERT INTO vault_keys (vault_id, account_id, version, wrapped) VALUES (?1, ?2, ?3, ?4) \
@@ -803,33 +911,23 @@ async fn share_post(req: &mut Request, db: &D1Database, api: &Api, now: u64) -> 
     let account = b64(session.account_id.as_bytes());
     let vault_of = ShareInfo::inspect(&share).map_err(|_| MALFORMED)?.vault_id;
     let vault = b64(vault_of.as_bytes());
-    let info = accept_share(
-        &share,
-        &session.account_id,
-        may_read(db, &vault, &account).await?,
-    )?;
+    let (rules, _) = load_rules(db, &vault_of).await?;
+    let info = accept_share(&share, &session.account_id, rules.as_ref())?;
     let recipient = b64(info.recipient.as_bytes());
-    let statements = vec![
-        stmt(
-            db,
-            "INSERT INTO shares (recipient, vault_id, version, sender, share, created_ms) \
+    let statements = vec![stmt(
+        db,
+        "INSERT INTO shares (recipient, vault_id, version, sender, share, created_ms) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (recipient, vault_id, version, sender) \
              DO UPDATE SET share = excluded.share, created_ms = excluded.created_ms",
-            &[
-                text(&recipient),
-                text(&vault),
-                num(u64::from(info.vault_key_version)),
-                text(&account),
-                text(&b64(&share)),
-                num(now),
-            ],
-        )?,
-        stmt(
-            db,
-            "INSERT OR IGNORE INTO vault_access (vault_id, account_id) VALUES (?1, ?2)",
-            &[text(&vault), text(&recipient)],
-        )?,
-    ];
+        &[
+            text(&recipient),
+            text(&vault),
+            num(u64::from(info.vault_key_version)),
+            text(&account),
+            text(&b64(&share)),
+            num(now),
+        ],
+    )?];
     db.batch(statements).await.map_err(storage)?;
     Ok("{}".into())
 }

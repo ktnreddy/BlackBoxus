@@ -139,6 +139,12 @@ pub enum AppError {
     /// An unsupported setting.
     #[error("That setting isn't available.")]
     InvalidSetting,
+    /// Only an owner can do this.
+    #[error("Only the vault's owner can do that.")]
+    NotOwner,
+    /// The vault would be left without an owner.
+    #[error("A vault needs at least one owner. Make someone else an owner first.")]
+    LastOwner,
     /// The vaults are locked.
     #[error("Your vaults are locked. Unlock them first.")]
     Locked,
@@ -179,6 +185,8 @@ impl AppError {
             Self::ReadOnly => "read_only",
             Self::Clipboard => "clipboard",
             Self::Locked => "locked",
+            Self::NotOwner => "not_owner",
+            Self::LastOwner => "last_owner",
             Self::InvalidSetting => "invalid_setting",
             Self::InvalidTotp => "invalid_totp",
             Self::ReadOnlyOffline => "read_only_offline",

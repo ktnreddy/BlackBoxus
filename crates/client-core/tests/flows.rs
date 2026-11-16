@@ -24,7 +24,9 @@ use server_core::api::{
 use server_core::login::OpaqueServer;
 use server_core::prelogin::FakeSaltKey;
 use server_core::transparency::KtLog;
-use server_core::vaults::{self as server_vaults, ItemWrite, accept_append, accept_owner_key};
+use server_core::vaults::{
+    self as server_vaults, ItemWrite, VaultRules, accept_append, accept_owner_key, touched_item,
+};
 use server_worker::http::{self, ApiError, Route};
 use vault_core::device::EnrolmentOffer;
 use vault_core::log::Checkpoint;
@@ -56,10 +58,11 @@ struct Server {
 /// An item's revision, envelope (none if deleted) and log sequence.
 type StoredItem = (u64, Option<Vec<u8>>, u64);
 
-/// Vault storage, as in migration 0002.
+/// Vault storage, as in migrations 0002 and 0003.
 #[derive(Default)]
 struct Vaults {
     logs: HashMap<VaultId, Vec<(Vec<u8>, Checkpoint)>>,
+    rules: HashMap<VaultId, VaultRules>,
     items: HashMap<VaultId, BTreeMap<ItemId, StoredItem>>,
     access: HashSet<(VaultId, AccountId)>,
     keys: HashMap<(VaultId, AccountId), BTreeMap<u32, Vec<u8>>>,
@@ -276,29 +279,36 @@ impl Server {
                     .as_deref()
                     .map(|e| http::unb64(e, 40_000))
                     .transpose()?;
-                let head = self
-                    .vaults
-                    .logs
-                    .get(&v)
-                    .and_then(|l| l.last())
-                    .map(|(_, c)| *c);
-                let readable = self.vaults.access.contains(&(v, s.account_id));
-                let a = accept_append(
-                    &v,
-                    head.as_ref(),
-                    readable,
-                    &s.account_id,
-                    &entry,
-                    envelope.as_deref(),
-                )?;
+                // The stored rules, with the item the entry changes.
+                let item = touched_item(&entry)?
+                    .and_then(|id| Some((id, self.vaults.items.get(&v)?.get(&id)?)));
+                let rules = self.vaults.rules.get(&v).cloned().map(|r| match item {
+                    Some((id, (revision, envelope, _))) => {
+                        r.with_item(id, *revision, envelope.is_none())
+                    }
+                    None => r,
+                });
+                let a = accept_append(&v, rules, &s.account_id, &entry, envelope.as_deref())?;
                 let seq = a.checkpoint.seq;
                 self.vaults
                     .logs
                     .entry(v)
                     .or_default()
                     .push((entry, a.checkpoint));
+                self.vaults.rules.insert(v, a.rules.clone());
                 if a.creates_vault {
                     self.vaults.access.insert((v, s.account_id));
+                }
+                if let Some(added) = a.added {
+                    self.vaults.access.insert((v, added));
+                }
+                if let Some(removed) = a.removed {
+                    self.vaults.access.remove(&(v, removed));
+                    self.vaults.keys.remove(&(v, removed));
+                    self.vaults.shares.retain(|(r, share)| {
+                        *r != removed
+                            || vault_core::ShareInfo::inspect(share).unwrap().vault_id != v
+                    });
                 }
                 let items = self.vaults.items.entry(v).or_default();
                 match a.item {
@@ -362,8 +372,12 @@ impl Server {
                 let s = self.session(req)?;
                 let r: http::VaultKeyPutRequest = http::parse_json(body.as_bytes())?;
                 let wrapped = http::unb64(&r.wrapped, 94)?;
-                let readable = self.vaults.access.contains(&(v, s.account_id));
-                let version = accept_owner_key(&v, readable, &wrapped)?;
+                let member = self
+                    .vaults
+                    .rules
+                    .get(&v)
+                    .is_some_and(|r| r.role(&s.account_id).is_some());
+                let version = accept_owner_key(&v, member, &wrapped)?;
                 self.vaults
                     .keys
                     .entry((v, s.account_id))
@@ -390,9 +404,8 @@ impl Server {
                 let v = vault_core::ShareInfo::inspect(&share)
                     .map_err(|_| ApiError::Core(server_core::Error::MalformedMessage))?
                     .vault_id;
-                let readable = self.vaults.access.contains(&(v, s.account_id));
-                let info = server_vaults::accept_share(&share, &s.account_id, readable)?;
-                self.vaults.access.insert((v, info.recipient));
+                let info =
+                    server_vaults::accept_share(&share, &s.account_id, self.vaults.rules.get(&v))?;
                 self.vaults.shares.push((info.recipient, share));
                 Ok("{}".into())
             }
@@ -884,6 +897,122 @@ fn two_devices_writing_at_once_conflict_instead_of_forking() {
     );
 }
 
+/// Accepts every share waiting for `who`.
+fn accept_all(server: &mut Server, who: &Unlocked) {
+    let shares = receive_shares(&server.send(&shares_request(who))).unwrap();
+    for (info, share) in &shares {
+        let sender = lookup(server, who, &info.sender);
+        let (_, req) = accept_share(who, share, &sender).unwrap();
+        written(&server.send(&req)).unwrap();
+    }
+}
+
+#[test]
+fn changing_roles_removing_members_and_replacing_the_key() {
+    let mut server = Server::new();
+    let accounts: Vec<(NewAccount, Unlocked)> = ["alice", "bob", "carol"]
+        .iter()
+        .map(|name| {
+            let email = format!("{name}@example.com");
+            let account = sign_up(&mut server, &email);
+            let unlocked = sign_in(&mut server, &email, PASSWORD, &account.secret_key).unwrap();
+            (account, unlocked)
+        })
+        .collect();
+    let (a, b, c) = (&accounts[0].1, &accounts[1].1, &accounts[2].1);
+    let (bob_id, carol_id) = (accounts[1].0.account_id, accounts[2].0.account_id);
+
+    let mut vault = new_vault(&mut server, a);
+    for (account, who) in [(bob_id, b), (carol_id, c)] {
+        let keys = lookup(&mut server, a, &account);
+        for req in vault.share_with(a, &keys, Role::Editor, 2).unwrap() {
+            written(&server.send(&req)).unwrap();
+        }
+        sync(&mut server, &mut vault, a).unwrap();
+        accept_all(&mut server, who);
+    }
+    let req = vault
+        .put_item(a, None, &login_item("old", "0ld"), 3)
+        .unwrap()
+        .1;
+    written(&server.send(&req)).unwrap();
+    sync(&mut server, &mut vault, a).unwrap();
+
+    // Carol becomes a viewer.
+    let req = vault.change_role(a, &carol_id, Role::Viewer, 4).unwrap();
+    written(&server.send(&req)).unwrap();
+    sync(&mut server, &mut vault, a).unwrap();
+    assert_eq!(vault.state().unwrap().members[&carol_id].role, Role::Viewer);
+
+    // Removing Bob needs every other member's keys, and only the right ones.
+    let carol_keys = lookup(&mut server, a, &carol_id);
+    let bob_keys = lookup(&mut server, a, &bob_id);
+    assert!(vault.remove_member(a, &bob_id, &[], 5).is_err());
+    assert!(
+        vault
+            .remove_member(a, &bob_id, std::slice::from_ref(&bob_keys), 5)
+            .is_err()
+    );
+    for req in vault
+        .remove_member(a, &bob_id, std::slice::from_ref(&carol_keys), 5)
+        .unwrap()
+    {
+        written(&server.send(&req)).unwrap();
+    }
+    sync(&mut server, &mut vault, a).unwrap();
+    let state = vault.state().unwrap();
+    assert_eq!(state.vault_key_version, 2);
+    assert!(!state.members.contains_key(&bob_id));
+
+    // Old items are re-encrypted under the new key.
+    let reqs = vault.reencrypt_items(a, 6).unwrap();
+    assert_eq!(reqs.len(), 1);
+    for req in &reqs {
+        written(&server.send(req)).unwrap();
+    }
+    sync(&mut server, &mut vault, a).unwrap();
+    assert!(vault.reencrypt_items(a, 7).unwrap().is_empty());
+    let req = vault
+        .put_item(a, None, &login_item("new", "n3w"), 8)
+        .unwrap()
+        .1;
+    written(&server.send(&req)).unwrap();
+    sync(&mut server, &mut vault, a).unwrap();
+
+    // Carol gets the new key and reads everything.
+    accept_all(&mut server, c);
+    let mut carols = VaultReplica::new(*vault.vault_id());
+    sync(&mut server, &mut carols, c).unwrap();
+    assert_eq!(titles(&carols), ["new", "old"]);
+
+    // Bob has no copy of the new key, so he can no longer open the items.
+    let mut bobs = VaultReplica::new(*vault.vault_id());
+    let bob_result = sync(&mut server, &mut bobs, b).and_then(|()| bobs.items());
+    assert!(bob_result.is_err());
+
+    // Carol leaves on her own; writes stop until Alice replaces the key.
+    let req = carols.leave(c, 9).unwrap();
+    written(&server.send(&req)).unwrap();
+    sync(&mut server, &mut vault, a).unwrap();
+    assert!(vault.state().unwrap().rotation_required);
+    assert!(
+        vault
+            .put_item(a, None, &login_item("blocked", "x"), 10)
+            .is_err()
+    );
+    for req in vault.rotate_key(a, &[], 10).unwrap() {
+        written(&server.send(&req)).unwrap();
+    }
+    sync(&mut server, &mut vault, a).unwrap();
+    assert_eq!(vault.state().unwrap().vault_key_version, 3);
+    assert!(
+        vault
+            .put_item(a, None, &login_item("ok again", "x"), 11)
+            .is_ok()
+    );
+    let _ = bob_keys;
+}
+
 #[test]
 fn sharing_a_vault_and_enforcing_roles() {
     let mut server = Server::new();
@@ -951,9 +1080,7 @@ fn sharing_a_vault_and_enforcing_roles() {
     sync(&mut server, &mut vault, &a).unwrap();
     assert_eq!(titles(&vault), ["from bob", "shared"]);
 
-    // Carol, a viewer, can read. The server stores her write (it cannot
-    // judge roles), but every client rejects the log from that point and
-    // keeps its last good state.
+    // Carol, a viewer, can read but the server refuses her write.
     let mut carols = VaultReplica::new(*vault.vault_id());
     sync(&mut server, &mut carols, &c).unwrap();
     assert_eq!(titles(&carols), ["from bob", "shared"]);
@@ -962,7 +1089,16 @@ fn sharing_a_vault_and_enforcing_roles() {
         .put_item(&c, None, &login_item("from carol", "c4r0l"), 5)
         .unwrap()
         .1;
-    written(&server.send(&req)).unwrap();
+    assert_eq!(server.send(&req).status, 403);
+
+    // A server that stored it anyway would not fool anyone: every client
+    // rejects the log from that point and keeps its last good state.
+    let r: http::LogAppendRequest = serde_json::from_str(req.body.as_deref().unwrap()).unwrap();
+    let entry = http::unb64(&r.entry, 4096).unwrap();
+    let hash = vault_core::log::entry_hash(&entry);
+    let log = server.vaults.logs.get_mut(vault.vault_id()).unwrap();
+    let seq = log.len() as u64;
+    log.push((entry, Checkpoint { seq, hash }));
     assert_eq!(
         sync(&mut server, &mut vault, &a).unwrap_err(),
         ClientError::Crypto(vault_core::Error::LogMismatch)

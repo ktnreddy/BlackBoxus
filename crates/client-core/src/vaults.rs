@@ -545,6 +545,282 @@ impl VaultReplica {
         ])
     }
 
+    /// Signs `operations` as consecutive log entries after the current head,
+    /// each with its envelope if it has one, and returns the append
+    /// requests in order.
+    fn chain(
+        &self,
+        unlocked: &Unlocked,
+        now_ms: u64,
+        operations: Vec<(Operation, Option<Vec<u8>>)>,
+    ) -> Result<Vec<Request>> {
+        let state = self.state.as_ref().ok_or(ClientError::InvalidResponse)?;
+        let mut seq = state.next_seq();
+        let mut prev_hash = state.head.hash;
+        let mut out = Vec::with_capacity(operations.len());
+        for (operation, envelope) in operations {
+            let entry = LogEntry {
+                vault_id: self.vault_id,
+                seq,
+                prev_hash,
+                author: *unlocked.session.account_id(),
+                author_key_set_version: unlocked.key_set_version,
+                timestamp_ms: now_ms,
+                operation,
+            }
+            .sign(&unlocked.key_set)?;
+            prev_hash = entry_hash(&entry);
+            seq = seq.checked_add(1).ok_or(ClientError::InvalidResponse)?;
+            out.push(self.append(unlocked, &entry, envelope.as_deref())?);
+        }
+        Ok(out)
+    }
+
+    /// Changes a member's role. Only an owner can, and one owner must
+    /// remain.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::InvalidResponse`] before the first sync or if
+    /// the account is not a member.
+    pub fn change_role(
+        &self,
+        unlocked: &Unlocked,
+        account: &AccountId,
+        role: Role,
+        now_ms: u64,
+    ) -> Result<Request> {
+        let state = self.state.as_ref().ok_or(ClientError::InvalidResponse)?;
+        if !state.members.contains_key(account) {
+            return Err(ClientError::InvalidResponse);
+        }
+        let mut requests = self.chain(
+            unlocked,
+            now_ms,
+            vec![(
+                Operation::ChangeRole {
+                    account_id: *account,
+                    role,
+                },
+                None,
+            )],
+        )?;
+        requests.pop().ok_or(ClientError::InvalidResponse)
+    }
+
+    /// Leaves the vault. An owner must then replace the vault key
+    /// ([`VaultReplica::rotate_key`]) before anyone can write again.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::InvalidResponse`] before the first sync.
+    pub fn leave(&self, unlocked: &Unlocked, now_ms: u64) -> Result<Request> {
+        let mut requests = self.chain(
+            unlocked,
+            now_ms,
+            vec![(
+                Operation::RemoveMember {
+                    account_id: *unlocked.session.account_id(),
+                },
+                None,
+            )],
+        )?;
+        requests.pop().ok_or(ClientError::InvalidResponse)
+    }
+
+    /// Checks that `keys` are exactly the members other than this account
+    /// (and `except`), each matching the bundle pinned in the log.
+    fn check_members(
+        &self,
+        unlocked: &Unlocked,
+        keys: &[VerifiedKeys],
+        except: Option<&AccountId>,
+    ) -> Result<()> {
+        let state = self.state.as_ref().ok_or(ClientError::InvalidResponse)?;
+        let me = unlocked.session.account_id();
+        let expected: Vec<&AccountId> = state
+            .members
+            .keys()
+            .filter(|a| *a != me && Some(*a) != except)
+            .collect();
+        if expected.len() != keys.len() {
+            return Err(ClientError::InvalidResponse);
+        }
+        for k in keys {
+            let member = state
+                .members
+                .get(&k.bundle.account_id)
+                .ok_or(ClientError::InvalidResponse)?;
+            if Some(&k.bundle.account_id) == except || bundle_hash(&k.signed) != member.bundle_hash
+            {
+                return Err(ClientError::InvalidResponse);
+            }
+        }
+        Ok(())
+    }
+
+    /// The requests that replace the vault key with a new version: the
+    /// key wrapped for this account, and a share for each of `members`.
+    fn new_key_requests(
+        &self,
+        unlocked: &Unlocked,
+        members: &[VerifiedKeys],
+        version: u32,
+    ) -> Result<Vec<Request>> {
+        let key = VaultKey::generate(version)?;
+        let wrapped = key.wrap_for_owner(
+            &unlocked.key_set,
+            unlocked.session.account_id(),
+            &self.vault_id,
+        )?;
+        let mut out = vec![Request::json(
+            Method::Put,
+            self.path("keys"),
+            &VaultKeyPutRequest {
+                wrapped: b64(&wrapped),
+            },
+            Some(&unlocked.session),
+        )?];
+        for member in members {
+            let share = key.share(
+                &self.vault_id,
+                &unlocked.key_set,
+                unlocked.session.account_id(),
+                unlocked.key_set_version,
+                &member.bundle,
+            )?;
+            out.push(Request::json(
+                Method::Post,
+                "/v1/shares".into(),
+                &SharePostRequest { share: b64(&share) },
+                Some(&unlocked.session),
+            )?);
+        }
+        Ok(out)
+    }
+
+    /// Removes a member and replaces the vault key (spec section 7.6).
+    /// `remaining` must hold the keys of every other member except the one
+    /// removed, from key transparency; each is checked against the bundle
+    /// the log pins for them. Send the requests in order, sync, then
+    /// re-encrypt with [`VaultReplica::reencrypt_items`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::InvalidResponse`] before the first sync, for
+    /// someone who is not a member, or if `remaining` does not match the
+    /// members.
+    pub fn remove_member(
+        &self,
+        unlocked: &Unlocked,
+        account: &AccountId,
+        remaining: &[VerifiedKeys],
+        now_ms: u64,
+    ) -> Result<Vec<Request>> {
+        let state = self.state.as_ref().ok_or(ClientError::InvalidResponse)?;
+        if !state.members.contains_key(account) || account == unlocked.session.account_id() {
+            return Err(ClientError::InvalidResponse);
+        }
+        self.check_members(unlocked, remaining, Some(account))?;
+        let version = state
+            .vault_key_version
+            .checked_add(1)
+            .ok_or(ClientError::InvalidResponse)?;
+        let mut requests = self.chain(
+            unlocked,
+            now_ms,
+            vec![
+                (
+                    Operation::RemoveMember {
+                        account_id: *account,
+                    },
+                    None,
+                ),
+                (
+                    Operation::RotateKey {
+                        new_version: version,
+                    },
+                    None,
+                ),
+            ],
+        )?;
+        requests.extend(self.new_key_requests(unlocked, remaining, version)?);
+        Ok(requests)
+    }
+
+    /// Replaces the vault key after a member left on their own, so writes
+    /// can resume. `members` must hold the keys of every other member.
+    ///
+    /// # Errors
+    ///
+    /// As [`VaultReplica::remove_member`].
+    pub fn rotate_key(
+        &self,
+        unlocked: &Unlocked,
+        members: &[VerifiedKeys],
+        now_ms: u64,
+    ) -> Result<Vec<Request>> {
+        let state = self.state.as_ref().ok_or(ClientError::InvalidResponse)?;
+        self.check_members(unlocked, members, None)?;
+        let version = state
+            .vault_key_version
+            .checked_add(1)
+            .ok_or(ClientError::InvalidResponse)?;
+        let mut requests = self.chain(
+            unlocked,
+            now_ms,
+            vec![(
+                Operation::RotateKey {
+                    new_version: version,
+                },
+                None,
+            )],
+        )?;
+        requests.extend(self.new_key_requests(unlocked, members, version)?);
+        Ok(requests)
+    }
+
+    /// Re-encrypts every item still under an older vault key with the
+    /// current one, as new revisions (spec section 7.6, step 4). Returns no
+    /// requests if there is nothing to do.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::InvalidResponse`] before the first sync or
+    /// without the current vault key.
+    pub fn reencrypt_items(&self, unlocked: &Unlocked, now_ms: u64) -> Result<Vec<Request>> {
+        let state = self.state.as_ref().ok_or(ClientError::InvalidResponse)?;
+        let key = self
+            .keys
+            .get(&state.vault_key_version)
+            .ok_or(ClientError::InvalidResponse)?;
+        let mut operations = Vec::new();
+        for (item_id, item) in self.items()? {
+            let current = state
+                .items
+                .get(&item_id)
+                .ok_or(ClientError::InvalidResponse)?;
+            if current.vault_key_version == key.version {
+                continue;
+            }
+            let revision = current.revision.saturating_add(1);
+            let envelope = seal_item(&item, &key.key, &self.vault_id, &item_id, revision)?;
+            operations.push((
+                Operation::PutItem {
+                    item_id,
+                    revision,
+                    vault_key_version: key.version,
+                    envelope_hash: envelope_hash(&envelope),
+                },
+                Some(envelope),
+            ));
+        }
+        if operations.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.chain(unlocked, now_ms, operations)
+    }
+
     // -- Local copy ----------------------------------------------------------
 
     /// Encrypts this copy for storage on the device (spec section 6.8). It

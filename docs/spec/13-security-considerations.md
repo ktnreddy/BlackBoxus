@@ -94,7 +94,13 @@ Pre-login, login and recovery answer unknown addresses like real ones, with two 
 
 Version 1 does not verify email addresses (Section 12.9). Someone can register an address first and so stop its owner from using it. This gives no access to any data.
 
-### 13.6.10 Availability
+### 13.6.10 A malicious server can block a vault
+
+The server applies the log's rules to every append (Section 8.6), so members cannot add entries that break them, and a removed member loses access to the vault. A malicious server could still store such an entry. Every client would then reject the log from that entry on and keep its last good state, so nothing is forged, but the vault would stop accepting changes. This is a denial of service, which a malicious server can cause anyway (13.6.11).
+
+A removed member may already have downloaded the vault, and keeps whatever they could decrypt then. Only items written after the key is replaced are safe from them.
+
+### 13.6.11 Availability
 
 A malicious or failing server can delete everything it stores. Clients SHOULD keep a local copy of the encrypted vault and offer encrypted exports.
 

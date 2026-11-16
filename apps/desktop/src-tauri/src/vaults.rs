@@ -265,9 +265,221 @@ impl Vaults {
         let result = self.sync_replica(transport, unlocked, &mut replica);
         if result.is_ok() {
             files.save(&replica, unlocked)?;
-            self.replicas.insert(id, replica);
         }
-        result
+        // On failure the replica keeps its last verified state, which is
+        // still the best copy to show.
+        self.replicas.insert(id, replica);
+        result?;
+        self.finish_rotation(transport, unlocked, id)
+    }
+
+    /// The keys of every member of `id` other than this account and
+    /// `except`, from key transparency.
+    fn other_members(
+        &mut self,
+        transport: &impl Transport,
+        unlocked: &Unlocked,
+        id: &VaultId,
+        except: Option<&AccountId>,
+    ) -> Result<Vec<VerifiedKeys>, AppError> {
+        let me = *unlocked.session.account_id();
+        let accounts: Vec<AccountId> = self
+            .replica(id)?
+            .state()
+            .ok_or(AppError::NotFound)?
+            .members
+            .keys()
+            .filter(|a| **a != me && Some(*a) != except)
+            .copied()
+            .collect();
+        accounts
+            .iter()
+            .map(|a| self.lookup(transport, unlocked, a))
+            .collect()
+    }
+
+    /// Sends `requests` in order. Returns `false` if another device wrote
+    /// first, so the caller can sync and build them again.
+    fn send_all(
+        transport: &impl Transport,
+        requests: &[client_core::Request],
+    ) -> Result<bool, AppError> {
+        for request in requests {
+            match written(&transport.send(request)?) {
+                Ok(()) => {}
+                Err(e) if is_conflict(&e) => return Ok(false),
+                Err(e) => return Err(vault_error(e)),
+            }
+        }
+        Ok(true)
+    }
+
+    fn my_role(&self, id: &VaultId, unlocked: &Unlocked) -> Option<Role> {
+        self.replicas
+            .get(id)?
+            .state()?
+            .members
+            .get(unlocked.session.account_id())
+            .map(|m| m.role)
+    }
+
+    /// As an owner, replaces the vault key if a member left, and
+    /// re-encrypts items still under an older key (spec section 7.6).
+    fn finish_rotation(
+        &mut self,
+        transport: &impl Transport,
+        unlocked: &Unlocked,
+        id: VaultId,
+    ) -> Result<(), AppError> {
+        if self.my_role(&id, unlocked) != Some(Role::Owner) {
+            return Ok(());
+        }
+        for _ in 0..3 {
+            let pending = self
+                .replica(&id)?
+                .state()
+                .is_some_and(|s| s.rotation_required);
+            let requests = if pending {
+                let members = self.other_members(transport, unlocked, &id, None)?;
+                self.replica(&id)?
+                    .rotate_key(unlocked, &members, now_ms())
+                    .map_err(vault_error)?
+            } else {
+                self.replica(&id)?
+                    .reencrypt_items(unlocked, now_ms())
+                    .map_err(vault_error)?
+            };
+            if requests.is_empty() {
+                return Ok(());
+            }
+            let _ = Self::send_all(transport, &requests)?;
+            let mut replica = self.replicas.remove(&id).ok_or(AppError::NotFound)?;
+            let result = self.sync_replica(transport, unlocked, &mut replica);
+            if result.is_ok() {
+                self.files.save(&replica, unlocked)?;
+            }
+            self.replicas.insert(id, replica);
+            result?;
+        }
+        Ok(())
+    }
+
+    fn require_owner(&self, id: &VaultId, unlocked: &Unlocked) -> Result<(), AppError> {
+        if self.my_role(id, unlocked) == Some(Role::Owner) {
+            Ok(())
+        } else {
+            Err(AppError::NotOwner)
+        }
+    }
+
+    /// Changes a member's role.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NotOwner`], [`AppError::LastOwner`], or a
+    /// server or network error.
+    pub fn change_role(
+        &mut self,
+        transport: &impl Transport,
+        unlocked: &Unlocked,
+        id: VaultId,
+        sharing_id: &str,
+        role: Role,
+    ) -> Result<(), AppError> {
+        self.require_owner(&id, unlocked)?;
+        let account = sharing_id::decode(sharing_id)?;
+        let state = self.replica(&id)?.state().ok_or(AppError::NotFound)?;
+        let owners = state
+            .members
+            .iter()
+            .filter(|(a, m)| m.role == Role::Owner && **a != account)
+            .count();
+        if owners == 0 {
+            return Err(AppError::LastOwner);
+        }
+        for _ in 0..2 {
+            let request = self
+                .replica(&id)?
+                .change_role(unlocked, &account, role, now_ms())
+                .map_err(vault_error)?;
+            let done = Self::send_all(transport, std::slice::from_ref(&request))?;
+            self.sync_one(transport, unlocked, id)?;
+            if done {
+                return Ok(());
+            }
+        }
+        Err(AppError::Server)
+    }
+
+    /// Removes a member, replaces the vault key and re-encrypts the items.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NotOwner`], or a server, network or
+    /// verification error.
+    pub fn remove_member(
+        &mut self,
+        transport: &impl Transport,
+        unlocked: &Unlocked,
+        id: VaultId,
+        sharing_id: &str,
+    ) -> Result<(), AppError> {
+        self.require_owner(&id, unlocked)?;
+        let account = sharing_id::decode(sharing_id)?;
+        if account == *unlocked.session.account_id() {
+            return Err(AppError::SelfShare);
+        }
+        for _ in 0..2 {
+            let remaining = self.other_members(transport, unlocked, &id, Some(&account))?;
+            let requests = self
+                .replica(&id)?
+                .remove_member(unlocked, &account, &remaining, now_ms())
+                .map_err(vault_error)?;
+            let done = Self::send_all(transport, &requests)?;
+            // Syncing also re-encrypts the items under the new key.
+            self.sync_one(transport, unlocked, id)?;
+            if done {
+                return Ok(());
+            }
+        }
+        Err(AppError::Server)
+    }
+
+    /// Leaves a vault someone else shared with this account.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::LastOwner`] for the only owner, or a server or
+    /// network error.
+    pub fn leave(
+        &mut self,
+        transport: &impl Transport,
+        unlocked: &Unlocked,
+        id: VaultId,
+    ) -> Result<(), AppError> {
+        let me = *unlocked.session.account_id();
+        let state = self.replica(&id)?.state().ok_or(AppError::NotFound)?;
+        let other_owner = state
+            .members
+            .iter()
+            .any(|(a, m)| m.role == Role::Owner && *a != me);
+        if !other_owner {
+            return Err(AppError::LastOwner);
+        }
+        for _ in 0..2 {
+            let request = self
+                .replica(&id)?
+                .leave(unlocked, now_ms())
+                .map_err(vault_error)?;
+            let done = Self::send_all(transport, std::slice::from_ref(&request))?;
+            if done {
+                self.replicas.remove(&id);
+                self.order.retain(|v| *v != id);
+                return Ok(());
+            }
+            self.sync_one(transport, unlocked, id)?;
+        }
+        Err(AppError::Server)
     }
 
     fn sync_replica(
@@ -553,6 +765,8 @@ impl Vaults {
         self.order
             .iter()
             .filter_map(|id| self.replicas.get(id).map(|r| (id, r)))
+            // A vault this account left can still be listed by the server.
+            .filter(|(_, r)| r.state().is_some_and(|s| s.members.contains_key(me)))
             .map(|(id, replica)| {
                 let role = replica
                     .state()

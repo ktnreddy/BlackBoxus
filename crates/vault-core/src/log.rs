@@ -37,7 +37,9 @@ pub enum Role {
 }
 
 impl Role {
-    const fn code(self) -> u8 {
+    /// The role's code in log entries.
+    #[must_use]
+    pub const fn code(self) -> u8 {
         match self {
             Self::Owner => 1,
             Self::Editor => 2,
@@ -45,7 +47,9 @@ impl Role {
         }
     }
 
-    const fn from_code(code: u8) -> Option<Self> {
+    /// The role with this code, if any.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
         match code {
             1 => Some(Self::Owner),
             2 => Some(Self::Editor),
@@ -431,11 +435,10 @@ pub fn verify_log(
             (None, Operation::CreateVault { bundle_hash }) => *bundle_hash,
             (None, _) => return Err(Error::LogMismatch),
             (Some(s), _) => {
-                let member = s.members.get(&entry.author).ok_or(Error::LogMismatch)?;
-                if member.key_set_version != entry.author_key_set_version {
-                    return Err(Error::LogMismatch);
-                }
-                member.bundle_hash
+                s.members
+                    .get(&entry.author)
+                    .ok_or(Error::LogMismatch)?
+                    .bundle_hash
             }
         };
         let identity = match identities.entry(pinned) {
@@ -459,8 +462,8 @@ pub fn verify_log(
         let hash = entry_hash(signed);
         let checkpoint = Checkpoint { seq, hash };
         state = Some(match state {
-            None => genesis(&entry, checkpoint)?,
-            Some(s) => apply(s, &entry, checkpoint)?,
+            None => VaultState::from_first_entry(&entry, checkpoint)?,
+            Some(s) => s.apply_entry(&entry, checkpoint)?,
         });
         prev = hash;
 
@@ -479,6 +482,33 @@ pub fn verify_log(
         return Err(Error::LogRollback);
     }
     Ok(state)
+}
+
+impl VaultState {
+    /// Starts a vault's state from its first entry, which must create it.
+    /// Does not check the signature; [`verify_log`] does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::LogMismatch`] if the entry does not create a vault.
+    pub fn from_first_entry(entry: &LogEntry, head: Checkpoint) -> Result<Self> {
+        genesis(entry, head)
+    }
+
+    /// Applies one entry after the head, enforcing the permission rules of
+    /// spec section 8.3, and returns the new state. Does not check the
+    /// signature or the link to the previous entry; [`verify_log`] does.
+    ///
+    /// The server uses this with only the parts of the state an entry can
+    /// touch: the members, the key version and, for an item change, that
+    /// one item.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::LogMismatch`] if the entry breaks a rule.
+    pub fn apply_entry(self, entry: &LogEntry, head: Checkpoint) -> Result<Self> {
+        apply(self, entry, head)
+    }
 }
 
 fn genesis(entry: &LogEntry, head: Checkpoint) -> Result<VaultState> {
@@ -506,11 +536,11 @@ fn genesis(entry: &LogEntry, head: Checkpoint) -> Result<VaultState> {
 
 /// Applies one entry, enforcing the permission rules of spec section 8.3.
 fn apply(mut s: VaultState, entry: &LogEntry, head: Checkpoint) -> Result<VaultState> {
-    let author_role = s
-        .members
-        .get(&entry.author)
-        .map(|m| m.role)
-        .ok_or(Error::LogMismatch)?;
+    let author = s.members.get(&entry.author).ok_or(Error::LogMismatch)?;
+    if author.key_set_version != entry.author_key_set_version {
+        return Err(Error::LogMismatch);
+    }
+    let author_role = author.role;
     let is_owner = author_role == Role::Owner;
     let can_edit = matches!(author_role, Role::Owner | Role::Editor);
 

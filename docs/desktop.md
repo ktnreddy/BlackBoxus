@@ -161,8 +161,22 @@ never has to say whether an address has an account.
    with keys from key transparency, stores the vault key for this account
    and syncs the vault. Shares that fail any check are ignored.
 
-Owners can add people as "Can edit" or "Can view". Changing roles and
-removing people come later.
+Owners can add people as "Can edit" or "Can view", change anyone's role
+(including making them an owner), and remove people. A vault always keeps
+at least one owner.
+
+Removing someone follows spec section 7.6: the app records the removal
+and a new vault key version in the log, wraps the new key for the owner,
+and shares it with every remaining member, each checked against the key
+bundle the log pins for them. It then re-encrypts every item under the new
+key, so the removed person's old key opens nothing the server now holds.
+The server stops letting them download the vault as soon as the removal
+is recorded, and refuses changes from anyone whose role does not allow
+them. Anything they saw while they were a member may still be in their own
+copies, so passwords they could see should be changed.
+
+Members who aren't owners can leave a vault. Writes then pause until an
+owner's app replaces the key, which it does by itself on its next sync.
 
 The key transparency log's public key is built into the app from
 `src-tauri/log-key.txt`. It is printed in the Deploy job's summary after

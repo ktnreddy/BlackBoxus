@@ -37,6 +37,9 @@
     "allow-get-settings",
     "allow-set-settings",
     "allow-show-emergency-kit",
-    "allow-sign-out"
+    "allow-sign-out",
+    "allow-change-member-role",
+    "allow-remove-member",
+    "allow-leave-vault"
   ]
 }

@@ -36,6 +36,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "set_settings",
             "show_emergency_kit",
             "sign_out",
+            "change_member_role",
+            "remove_member",
+            "leave_vault",
         ]),
     ))?;
     Ok(())

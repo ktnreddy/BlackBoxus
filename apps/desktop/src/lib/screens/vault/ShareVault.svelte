@@ -1,7 +1,10 @@
 <script lang="ts">
   import Icon from "../../components/Icon.svelte";
   import {
+    changeMemberRole,
     compareSafetyNumber,
+    leaveVault,
+    removeMember,
     copyText,
     errorMessage,
     lookUpMember,
@@ -17,7 +20,66 @@
     vault,
     onclose,
     onnotice,
-  }: { vault: VaultSummary; onclose: () => void; onnotice: (text: string) => void } = $props();
+    onleft,
+  }: {
+    vault: VaultSummary;
+    onclose: () => void;
+    onnotice: (text: string) => void;
+    onleft: () => void;
+  } = $props();
+
+  /** The member whose remove or leave button is waiting for a second click. */
+  let confirming = $state<string | null>(null);
+
+  async function setRole(member: Member, role: Member["role"]) {
+    if (busy || member.role === role) return;
+    busy = true;
+    error = "";
+    try {
+      members = await changeMemberRole(vault.id, member.sharing_id, role);
+      onnotice("Role changed.");
+    } catch (e) {
+      error = errorMessage(e);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function remove(member: Member) {
+    if (confirming !== member.sharing_id) {
+      confirming = member.sharing_id;
+      return;
+    }
+    busy = true;
+    error = "";
+    try {
+      members = await removeMember(vault.id, member.sharing_id);
+      onnotice("Removed. The vault key was replaced and items re-encrypted.");
+    } catch (e) {
+      error = errorMessage(e);
+    } finally {
+      busy = false;
+      confirming = null;
+    }
+  }
+
+  async function leave(member: Member) {
+    if (confirming !== member.sharing_id) {
+      confirming = member.sharing_id;
+      return;
+    }
+    busy = true;
+    error = "";
+    try {
+      await leaveVault(vault.id);
+      onnotice(`You left ${vault.name}.`);
+      onleft();
+    } catch (e) {
+      error = errorMessage(e);
+      busy = false;
+      confirming = null;
+    }
+  }
 
   const ROLES: Record<Member["role"], string> = {
     owner: "Owner",
@@ -156,14 +218,52 @@
             <span class="avatar" aria-hidden="true"><Icon name="users" size={16} /></span>
             <span class="who">
               <span class="name">{m.you ? "You" : "Member"}</span>
-              <span class="small mono">{m.sharing_id}</span>
+              <span class="small mono selectable" title={m.sharing_id}>{m.sharing_id}</span>
             </span>
-            {#if !m.you}
-              <button type="button" class="btn ghost sm" disabled={busy} onclick={() => compare(m)}
-                >Compare</button
-              >
-            {/if}
-            <span class="chip">{ROLES[m.role]}</span>
+            <span class="member-actions">
+              {#if !m.you}
+                <button type="button" class="btn ghost sm" disabled={busy} onclick={() => compare(m)}
+                  >Compare</button
+                >
+              {/if}
+              {#if owner && !m.you}
+                <select
+                  class="role"
+                  aria-label={`Role for ${m.sharing_id}`}
+                  value={m.role}
+                  disabled={busy}
+                  onchange={(e) => setRole(m, e.currentTarget.value as Member["role"])}
+                >
+                  <option value="owner">Owner</option>
+                  <option value="editor">Can edit</option>
+                  <option value="viewer">Can view</option>
+                </select>
+                <button
+                  type="button"
+                  class="btn sm"
+                  class:ghost={confirming !== m.sharing_id}
+                  class:danger={confirming === m.sharing_id}
+                  disabled={busy}
+                  onclick={() => remove(m)}
+                  onblur={() => (confirming = null)}
+                  >{confirming === m.sharing_id ? "Remove for good?" : "Remove"}</button
+                >
+              {:else}
+                <span class="chip">{ROLES[m.role]}</span>
+              {/if}
+              {#if m.you && members.some((o) => !o.you && o.role === "owner")}
+                <button
+                  type="button"
+                  class="btn sm"
+                  class:ghost={confirming !== m.sharing_id}
+                  class:danger={confirming === m.sharing_id}
+                  disabled={busy}
+                  onclick={() => leave(m)}
+                  onblur={() => (confirming = null)}
+                  >{confirming === m.sharing_id ? "Leave for good?" : "Leave"}</button
+                >
+              {/if}
+            </span>
           </li>
         {/each}
       </ul>
@@ -226,8 +326,8 @@
 <style>
   .share {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 48px;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    gap: 40px;
     min-height: 100%;
   }
   .left,
@@ -312,10 +412,33 @@
     flex-direction: column;
   }
   .who .mono {
-    font-size: 12px;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .name {
     font-size: 15px;
+  }
+  .member-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+  }
+  .role {
+    height: 36px;
+    padding: 0 12px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: #111113;
+    color: var(--soft);
+    font-size: 13px;
+  }
+  .danger {
+    background: #3a1414;
+    border: 1px solid #6b2a2a;
+    color: #ffc9c9;
   }
   .chip {
     display: inline-flex;

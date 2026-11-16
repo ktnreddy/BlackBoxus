@@ -331,3 +331,106 @@ fn offline_unlock_shows_the_last_synced_copy() -> Result<(), AppError> {
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
+
+#[test]
+#[ignore = "needs a running server and BLACKBOXUS_LOG_KEY"]
+fn removing_and_leaving_replace_the_key() -> Result<(), AppError> {
+    use blackboxus_desktop::vaults::{VaultFiles, Vaults, log_key};
+    use vault_core::log::Role;
+    use vault_core::{Field, FieldKind, Item, ItemType, VaultId};
+
+    let transport = Https::new();
+    let server = ServerIdentity::new(ORIGIN)?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let dir = std::env::temp_dir().join(format!("blackboxus-members-{nonce}"));
+    let mut people = Vec::new();
+    for name in ["alice", "bob", "carol"] {
+        let (unlocked, _, _, _) = create_account(
+            &transport,
+            &server,
+            &format!("{name}-{nonce}@example.com"),
+            PASSWORD,
+        )?;
+        let mut vaults = Vaults::new(VaultFiles::new(dir.join(name)), log_key()?);
+        vaults.sync(&transport, &unlocked)?;
+        people.push((unlocked, vaults));
+    }
+    let sharing_id = |p: &(client_core::login::Unlocked, Vaults)| -> Result<String, AppError> {
+        let own = VaultId::from_bytes(
+            wire::unb64_array(
+                &p.1.summaries(&p.0)
+                    .first()
+                    .map(|v| v.id.clone())
+                    .unwrap_or_default(),
+            )
+            .unwrap_or_default(),
+        );
+        Ok(p.1
+            .members(&own, &p.0)?
+            .into_iter()
+            .find(|m| m.you)
+            .map(|m| m.sharing_id)
+            .unwrap_or_default())
+    };
+    let (bob_id, carol_id) = (sharing_id(&people[1])?, sharing_id(&people[2])?);
+    let (alice, rest) = people.split_first_mut().ok_or(AppError::Internal)?;
+    let id = VaultId::from_bytes(
+        wire::unb64_array(
+            &alice
+                .1
+                .summaries(&alice.0)
+                .first()
+                .map(|v| v.id.clone())
+                .unwrap_or_default(),
+        )
+        .unwrap_or_default(),
+    );
+    let item = Item {
+        item_type: ItemType::Login,
+        created_ms: 1,
+        modified_ms: 1,
+        fields: vec![Field::new(FieldKind::Title, "Family Wi-Fi")],
+    };
+    alice.1.put(&transport, &alice.0, id, None, &item)?;
+    for who in [&bob_id, &carol_id] {
+        alice.1.look_up(&transport, &alice.0, id, who)?;
+        alice.1.share(&transport, &alice.0, id, who, Role::Editor)?;
+    }
+
+    // Removing Bob replaces the key and re-encrypts the item.
+    alice.1.remove_member(&transport, &alice.0, id, &bob_id)?;
+    assert_eq!(alice.1.members(&id, &alice.0)?.len(), 2);
+    // The server no longer lets Bob write to or download the vault, and his
+    // app stops listing it.
+    let bob = rest.get_mut(0).ok_or(AppError::Internal)?;
+    assert!(bob.1.put(&transport, &bob.0, id, None, &item).is_err());
+    bob.1.sync(&transport, &bob.0)?;
+    assert!(
+        bob.1
+            .summaries(&bob.0)
+            .iter()
+            .all(|v| v.id != wire::b64(id.as_bytes()))
+    );
+    let carol = rest.get_mut(1).ok_or(AppError::Internal)?;
+    carol.1.sync(&transport, &carol.0)?;
+    assert_eq!(carol.1.item(&id, &alice.1.items(&id)?[0].0)?, item);
+
+    // Carol leaves; Alice's next sync replaces the key again by itself.
+    carol.1.leave(&transport, &carol.0, id)?;
+    assert!(
+        carol
+            .1
+            .summaries(&carol.0)
+            .iter()
+            .all(|v| v.id != wire::b64(id.as_bytes()))
+    );
+    alice.1.sync(&transport, &alice.0)?;
+    assert_eq!(alice.1.members(&id, &alice.0)?.len(), 1);
+    alice.1.put(&transport, &alice.0, id, None, &item)?;
+    assert_eq!(alice.1.items(&id)?.len(), 2);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}

@@ -284,3 +284,19 @@ export function showEmergencyKit(password: string): Promise<EmergencyKit> {
 export function signOut(): Promise<AppStatus> {
   return invoke<AppStatus>("sign_out");
 }
+
+export function changeMemberRole(
+  vault: string,
+  sharingId: string,
+  role: Member["role"],
+): Promise<Member[]> {
+  return invoke<Member[]>("change_member_role", { vault, sharingId, role });
+}
+
+export function removeMember(vault: string, sharingId: string): Promise<Member[]> {
+  return invoke<Member[]>("remove_member", { vault, sharingId });
+}
+
+export function leaveVault(vault: string): Promise<void> {
+  return invoke<void>("leave_vault", { vault });
+}

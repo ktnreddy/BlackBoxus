@@ -275,7 +275,16 @@
 
   {#if sharing && vault}
     <main class="glow detail wide">
-      <ShareVault {vault} onclose={() => (sharing = false)} onnotice={showNotice} />
+      <ShareVault
+        {vault}
+        onclose={() => (sharing = false)}
+        onnotice={showNotice}
+        onleft={async () => {
+          sharing = false;
+          vaultId = null;
+          await sync();
+        }}
+      />
       {#if notice}
         <div class="toast" role="status"><Icon name="check" size={16} />{notice}</div>
       {/if}
