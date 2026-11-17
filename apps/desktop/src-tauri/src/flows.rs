@@ -5,6 +5,7 @@
 
 use client_core::ClientError;
 use client_core::login::{Login, OfflineRecord, Unlocked};
+use client_core::password::PasswordChange;
 use client_core::recovery::{
     RecoveredAccount, Recovery, has_recovery_key, new_recovery_key, recovery_status_request,
     remove_recovery_key,
@@ -189,4 +190,38 @@ pub fn recover(
     let (setting, request) = recovered.choose_password(password, secret_key, KdfParams::DEFAULT)?;
     let (finishing, request) = setting.register(&transport.send(&request)?)?;
     Ok(finishing.complete(&transport.send(&request)?)?)
+}
+
+/// Changes the master password (spec section 3.9). Signs in with the
+/// current password for a fresh session, registers the new password and
+/// wraps the same key set with it. The server ends every other session, so
+/// this returns the fresh session to carry on with, and the record for
+/// unlocking offline with the new password.
+///
+/// # Errors
+///
+/// Returns [`AppError::WrongPassword`] if the current password is wrong,
+/// an error for an unacceptable new password, or a server or network
+/// failure.
+pub fn change_password(
+    transport: &impl Transport,
+    server: &ServerIdentity,
+    email: &str,
+    secret_key: &SecretKey,
+    current: &str,
+    new: &str,
+    account: &AccountId,
+) -> Result<(Unlocked, OfflineRecord), AppError> {
+    let (fresh, _) = match sign_in(transport, server, email, secret_key, current) {
+        Err(AppError::WrongCredentials) => return Err(AppError::WrongPassword),
+        other => other?,
+    };
+    if fresh.session.account_id() != account {
+        return Err(AppError::Tampered);
+    }
+    let (change, request) =
+        PasswordChange::start(email, new, secret_key, server, KdfParams::DEFAULT)?;
+    let (changing, request) = change.register(&fresh, &transport.send(&request)?)?;
+    let record = changing.complete(&transport.send(&request)?)?;
+    Ok((fresh, record))
 }

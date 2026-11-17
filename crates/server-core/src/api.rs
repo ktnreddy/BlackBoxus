@@ -137,6 +137,33 @@ pub struct KeyLookupResponse {
     pub consistency_proof: Vec<[u8; 32]>,
 }
 
+/// One of an account's own log leaves, with its inclusion proof.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnLeaf {
+    /// The leaf.
+    pub leaf: Vec<u8>,
+    /// Its index in the log.
+    pub leaf_index: u64,
+    /// Inclusion proof against the current tree head.
+    pub inclusion_proof: Vec<[u8; 32]>,
+}
+
+/// The server's answer when an account asks for its own leaves (spec
+/// section 9.5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnLeavesResponse {
+    /// Every leaf for the account, in log order.
+    pub leaves: Vec<OwnLeaf>,
+    /// The current signed tree head.
+    pub signed_tree_head: Vec<u8>,
+    /// Consistency proof from the tree size the client last saw.
+    pub consistency_proof: Vec<[u8; 32]>,
+}
+
+/// Most leaves one account can have: one per key set version, and key sets
+/// are replaced rarely.
+pub const MAX_OWN_LEAVES: usize = 1000;
+
 /// An enrolment transfer waiting to be picked up (spec section 10.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnrolmentTransfer {
@@ -422,6 +449,51 @@ impl Api {
             leaf: leaf.to_vec(),
             leaf_index,
             inclusion_proof: log.inclusion_proof(leaf_index, size)?,
+            signed_tree_head,
+            consistency_proof,
+        })
+    }
+
+    /// `GET /v1/accounts/self/leaves` (spec section 9.5): every leaf the
+    /// log holds for the signed-in account, given as `(leaf_index, leaf)`
+    /// in log order, each with an inclusion proof against the current
+    /// signed tree head.
+    ///
+    /// # Errors
+    ///
+    /// As [`Api::key_lookup_with_head`]; also [`Error::InvalidConfiguration`]
+    /// for more than [`MAX_OWN_LEAVES`] leaves.
+    pub fn own_leaves(
+        log: &KtLog,
+        leaves: &[(u64, Vec<u8>)],
+        seen_size: Option<u64>,
+        signed_tree_head: Vec<u8>,
+    ) -> Result<OwnLeavesResponse> {
+        let size = log.size();
+        let head_size = signed_tree_head
+            .get(2..10)
+            .and_then(|b| <[u8; 8]>::try_from(b).ok())
+            .map(u64::from_be_bytes);
+        if head_size != Some(size) || leaves.len() > MAX_OWN_LEAVES {
+            return Err(Error::InvalidConfiguration);
+        }
+        let consistency_proof = match seen_size {
+            Some(old) if old > size => return Err(Error::MalformedMessage),
+            Some(old) if old > 0 => log.consistency_proof(old, size)?,
+            _ => Vec::new(),
+        };
+        let leaves = leaves
+            .iter()
+            .map(|(index, leaf)| {
+                Ok(OwnLeaf {
+                    leaf: leaf.clone(),
+                    leaf_index: *index,
+                    inclusion_proof: log.inclusion_proof(*index, size)?,
+                })
+            })
+            .collect::<Result<_>>()?;
+        Ok(OwnLeavesResponse {
+            leaves,
             signed_tree_head,
             consistency_proof,
         })

@@ -70,6 +70,10 @@ pub enum Route {
     RecoveryStart,
     /// `POST /v1/recovery/finish`
     RecoveryFinish,
+    /// `POST /v1/password`
+    Password,
+    /// `GET /v1/accounts/self/leaves`
+    OwnLeaves,
     /// An endpoint of spec section 12 that this version does not serve yet.
     NotImplemented,
 }
@@ -78,8 +82,6 @@ pub enum Route {
 const PLANNED: &[(&str, &str)] = &[
     ("PUT", "/v1/keyset/wrapped"),
     ("DELETE", "/v1/keyset/wrapped"),
-    ("POST", "/v1/password"),
-    ("GET", "/v1/accounts/self/leaves"),
     ("PUT", "/v1/emergency"),
 ];
 
@@ -105,6 +107,8 @@ pub fn route(method: &str, path: &str) -> Result<Route, ApiError> {
         ("DELETE", "/v1/recovery") => Some(Route::RecoveryDelete),
         ("POST", "/v1/recovery/start") => Some(Route::RecoveryStart),
         ("POST", "/v1/recovery/finish") => Some(Route::RecoveryFinish),
+        ("POST", "/v1/password") => Some(Route::Password),
+        ("GET", "/v1/accounts/self/leaves") => Some(Route::OwnLeaves),
         _ => None,
     };
     if let Some(r) = fixed {
@@ -238,6 +242,24 @@ pub fn lookup_json(r: server_core::api::KeyLookupResponse) -> KeyLookupJson {
         leaf: b64(&r.leaf),
         leaf_index: r.leaf_index,
         inclusion_proof: r.inclusion_proof.iter().map(|h| b64(h)).collect(),
+        signed_tree_head: b64(&r.signed_tree_head),
+        consistency_proof: r.consistency_proof.iter().map(|h| b64(h)).collect(),
+    }
+}
+
+/// The JSON form of an own-leaves answer.
+#[must_use]
+pub fn own_leaves_json(r: server_core::api::OwnLeavesResponse) -> wire::OwnLeavesJson {
+    wire::OwnLeavesJson {
+        leaves: r
+            .leaves
+            .iter()
+            .map(|l| wire::OwnLeafJson {
+                leaf: b64(&l.leaf),
+                leaf_index: l.leaf_index,
+                inclusion_proof: l.inclusion_proof.iter().map(|h| b64(h)).collect(),
+            })
+            .collect(),
         signed_tree_head: b64(&r.signed_tree_head),
         consistency_proof: r.consistency_proof.iter().map(|h| b64(h)).collect(),
     }
@@ -430,6 +452,11 @@ mod tests {
         assert_eq!(
             route("POST", "/v1/recovery/finish"),
             Ok(Route::RecoveryFinish)
+        );
+        assert_eq!(route("POST", "/v1/password"), Ok(Route::Password));
+        assert_eq!(
+            route("GET", "/v1/accounts/self/leaves"),
+            Ok(Route::OwnLeaves)
         );
         for (m, p) in [
             ("GET", "/v1/prelogin"),

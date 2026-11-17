@@ -87,6 +87,17 @@ pub struct VaultFiles {
     dir: PathBuf,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SelfCheck {
+    checked_ms: u64,
+    unknown_keys: bool,
+}
+
+/// How often the account's own keys are checked against the key log
+/// (spec section 9.5 asks for at least daily).
+const SELF_CHECK_EVERY_MS: u64 = 86_400_000;
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SavedHead {
@@ -125,6 +136,18 @@ impl VaultFiles {
     fn save_accepted(&self, accepted: &BTreeSet<String>) -> Result<(), AppError> {
         let json = serde_json::to_vec_pretty(accepted).map_err(|_| AppError::Storage)?;
         write_atomically(&self.dir, "accepted-shares.json", &json)
+    }
+
+    /// When the account's own keys were last checked against the key log,
+    /// and whether that check found keys this account did not publish.
+    fn load_self_check(&self) -> Option<SelfCheck> {
+        let text = fs::read_to_string(self.dir.join("self-check.json")).ok()?;
+        serde_json::from_str(&text).ok()
+    }
+
+    fn save_self_check(&self, check: &SelfCheck) -> Result<(), AppError> {
+        let json = serde_json::to_vec_pretty(check).map_err(|_| AppError::Storage)?;
+        write_atomically(&self.dir, "self-check.json", &json)
     }
 
     fn load_head(&self) -> Option<TreeHead> {
@@ -572,6 +595,50 @@ impl Vaults {
             self.order.insert(0, id);
         }
         Ok(())
+    }
+
+    /// Self-monitoring (spec section 9.5): checks, at most once a day, that
+    /// the key log records no keys for this account other than its own.
+    /// Once keys it did not publish have been found, checks on every sync
+    /// until they are gone, and returns `true` meanwhile.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Tampered`] for a bad proof or a log that went
+    /// back in time, or a server or network error.
+    pub fn check_own_keys(
+        &mut self,
+        transport: &impl Transport,
+        unlocked: &Unlocked,
+        now_ms: u64,
+    ) -> Result<bool, AppError> {
+        let last = self.files.load_self_check();
+        if let Some(last) = last
+            && !last.unknown_keys
+            && now_ms.saturating_sub(last.checked_ms) < SELF_CHECK_EVERY_MS
+        {
+            return Ok(false);
+        }
+        let me = *unlocked.session.account_id();
+        let own = self.lookup(transport, unlocked, &me)?;
+        let request = self.directory.own_leaves_request(&unlocked.session);
+        let result = self
+            .directory
+            .check_own_keys(unlocked, &own, &transport.send(&request)?);
+        let unknown_keys = match result {
+            Ok(()) => false,
+            Err(ClientError::Crypto(vault_core::Error::UnknownKeys)) => true,
+            Err(ClientError::Crypto(_)) => return Err(AppError::Tampered),
+            Err(other) => return Err(vault_error(other)),
+        };
+        if let Some(head) = self.directory.tree_head() {
+            self.files.save_head(head)?;
+        }
+        self.files.save_self_check(&SelfCheck {
+            checked_ms: now_ms,
+            unknown_keys,
+        })?;
+        Ok(unknown_keys)
     }
 
     /// Creates a vault owned by this account, with a name.

@@ -64,7 +64,17 @@ Clients MUST do this every time they use someone else's keys: before sharing a v
 
 ### Self-monitoring
 
-Each device SHOULD, at least daily, request all leaves for its own account ID, each with an inclusion proof against a fresh tree head, and alert the user if any leaf records a bundle this account did not publish.
+Each device SHOULD, at least daily, request all leaves for its own account ID, each with an inclusion proof against a fresh tree head, and alert the user if any leaf records a bundle this account did not publish. Without this check, a server could log a second bundle under the account's ID and hand it to people sharing with the account; their lookups would verify, because the bad bundle really is in the log.
+
+The client:
+
+1. looks up its own account ID as in 9.4, and checks that the returned bundle carries the public keys of its own key set, at its current version;
+2. requests `GET /v1/accounts/self/leaves?seen={tree_size}` and verifies the tree head and consistency proof as in 9.4, steps 1 and 2;
+3. checks that every leaf is for its own account ID, that leaf indexes strictly increase, and that every inclusion proof verifies;
+4. checks that exactly the leaves for its current key set version, or later, record its own bundle's hash, and that at least one does. Leaves for older versions record key sets the account replaced, and are accepted;
+5. stores the new tree head.
+
+Any failure in step 1 or 4 MUST be shown to the user as a warning that keys they did not publish are recorded for their account, kept until a later check passes, and the client SHOULD check again on every sync while it shows. A failure in step 2 or 3 is evidence of a misbehaving server, handled like a failed key lookup.
 
 ### Safety numbers
 

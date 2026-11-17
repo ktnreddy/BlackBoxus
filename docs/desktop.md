@@ -79,6 +79,12 @@ caught.
   window. On Windows the copy is kept out of clipboard history and cloud
   clipboard sync, and it is cleared after 30 seconds, or on locking, if
   it is still on the clipboard.
+- **Watching for keys in your name:** once a day, after a sync, the app
+  checks the key transparency log for every key recorded under the
+  account's ID (spec section 9.5). If any is not this account's own, a red
+  warning stays at the top of the window, checked again on every sync,
+  because someone could be posing as the user to people who share with
+  them. The time of the last check is kept in `vaults/self-check.json`.
 - **Auto-lock:** after 10 minutes without keyboard or mouse input.
 - **Password generator:** random passwords (8 to 64 characters, letters
   that look alike left out) or passphrases of 3 to 10 words from the
@@ -94,6 +100,13 @@ The settings dialog (sliders button at the bottom of the sidebar) holds:
 - **Unlock with Windows Hello** (below).
 - **Lock after** 1, 5, 10 (default), 15, 30 or 60 minutes without keyboard
   or mouse input. Saved in `settings.json`; nothing secret.
+- **Master password:** asks for the current password and a new one (the
+  same rules as a new account). The app signs in with the current password
+  for a fresh session, registers the new one and wraps the same key set
+  with it (spec section 3.9). The server ends every other session, so the
+  app carries on with the fresh one and stores it for Windows Hello; the
+  offline unlock record is replaced. Other devices must sign in again with
+  the new password. The Secret Key, vaults and recovery key are unchanged.
 - **Emergency Kit:** shows the Secret Key again for printing, after the
   master password is checked on this computer against the offline unlock
   record.
@@ -125,7 +138,7 @@ Hello unlock off (it held the old session), and makes a new recovery key at
 once, because the old one has been typed here. The new Emergency Kit shows
 both.
 
-
+## Windows Hello
 
 Settings → "Unlock with Windows Hello" lets the app unlock with a face,
 fingerprint or PIN instead of the master password (spec section 10.4).

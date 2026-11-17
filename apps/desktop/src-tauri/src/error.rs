@@ -30,6 +30,9 @@ pub enum AppError {
     /// The two new passwords differ.
     #[error("The two passwords don't match.")]
     PasswordsDiffer,
+    /// The new master password is the current one.
+    #[error("Choose a password different from your current one.")]
+    SamePassword,
     /// The email address is not valid.
     #[error("Enter a valid email address.")]
     InvalidEmail,
@@ -177,6 +180,7 @@ impl AppError {
             Self::PasswordTooLong => "password_too_long",
             Self::WeakPassword => "weak_password",
             Self::PasswordsDiffer => "passwords_differ",
+            Self::SamePassword => "same_password",
             Self::InvalidEmail => "invalid_email",
             Self::InvalidSecretKey(_) => "invalid_secret_key",
             Self::InvalidRecoveryKey(_) => "invalid_recovery_key",

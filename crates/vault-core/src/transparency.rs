@@ -373,6 +373,100 @@ pub fn verify_key_lookup(
     Ok((bundle, head))
 }
 
+/// One of an account's own log leaves, with its inclusion proof.
+#[derive(Debug, Clone)]
+pub struct OwnLeaf<'a> {
+    /// The encoded leaf.
+    pub leaf: &'a [u8],
+    /// Its position in the log.
+    pub leaf_index: u64,
+    /// Inclusion proof in the signed tree head's tree.
+    pub inclusion_proof: &'a [Hash],
+}
+
+/// What the server returns when an account asks for all of its own leaves
+/// (spec section 9.5).
+#[derive(Debug, Clone)]
+pub struct OwnLeaves<'a> {
+    /// Every leaf the log holds for the account, in log order.
+    pub leaves: &'a [OwnLeaf<'a>],
+    /// The current signed tree head.
+    pub signed_tree_head: &'a [u8],
+    /// Consistency proof from the client's last tree head to this one.
+    pub consistency_proof: &'a [Hash],
+}
+
+/// Self-monitoring (spec section 9.5): checks that every leaf the log holds
+/// for `account_id` is included in a signed, consistent tree, and that none
+/// records keys this account did not publish. `own_signed_bundle` is the
+/// account's current signed bundle, which the caller MUST have checked
+/// carries its own key set's public keys. Returns the new tree head.
+///
+/// A leaf for an older key set version is accepted: it records keys the
+/// account replaced. Any other leaf must record `own_signed_bundle`.
+///
+/// # Errors
+///
+/// As [`verify_key_lookup`] for the tree head and proofs;
+/// [`Error::LogMismatch`] if a leaf is for another account or leaves
+/// repeat or are out of order; [`Error::UnknownKeys`] if a leaf records a
+/// bundle this account did not publish, or no leaf records its own.
+pub fn verify_own_leaves(
+    account_id: &AccountId,
+    own_signed_bundle: &[u8],
+    answer: &OwnLeaves<'_>,
+    log_key: &IdentityPublicKey,
+    last_tree_head: Option<&TreeHead>,
+) -> Result<TreeHead> {
+    let head = TreeHead::verify_signed(answer.signed_tree_head, log_key)?;
+    if let Some(last) = last_tree_head {
+        if head.tree_size < last.tree_size {
+            return Err(Error::LogRollback);
+        }
+        verify_consistency(
+            last.tree_size,
+            head.tree_size,
+            &last.root_hash,
+            &head.root_hash,
+            answer.consistency_proof,
+        )?;
+    }
+    let own = PublicKeyBundle::verify_signed(own_signed_bundle)?;
+    if own.account_id != *account_id {
+        return Err(Error::LogMismatch);
+    }
+    let own_hash = bundle_hash(own_signed_bundle);
+    let mut found = false;
+    let mut previous: Option<u64> = None;
+    for item in answer.leaves {
+        if previous.is_some_and(|p| item.leaf_index <= p) {
+            return Err(Error::LogMismatch);
+        }
+        previous = Some(item.leaf_index);
+        let leaf = KtLeaf::decode(item.leaf)?;
+        if leaf.account_id != *account_id {
+            return Err(Error::LogMismatch);
+        }
+        verify_inclusion(
+            item.leaf_index,
+            head.tree_size,
+            &leaf_hash(item.leaf),
+            item.inclusion_proof,
+            &head.root_hash,
+        )?;
+        if leaf.bundle_hash == own_hash && leaf.key_set_version == own.key_set_version {
+            found = true;
+        } else if leaf.key_set_version >= own.key_set_version {
+            return Err(Error::UnknownKeys);
+        }
+    }
+    if found {
+        Ok(head)
+    } else {
+        Err(Error::UnknownKeys)
+    }
+}
+
 /// A 30-digit fingerprint of one account's keys, in six groups of five
 /// digits (spec section 9.5).
 #[must_use]

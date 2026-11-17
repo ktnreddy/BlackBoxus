@@ -560,3 +560,92 @@ fn creating_and_renaming_vaults() -> Result<(), AppError> {
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
+
+#[test]
+#[ignore = "needs a running server"]
+fn changing_the_master_password() -> Result<(), AppError> {
+    use blackboxus_desktop::flows::{change_password, recovery_key_set};
+
+    const NEW_PASSWORD: &str = "meadow-copper-signal-ember";
+    let transport = Https::new();
+    let server = ServerIdentity::new(ORIGIN)?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let email = format!("change-{nonce}@example.com");
+    let (created, _, secret_key, _) = create_account(&transport, &server, &email, PASSWORD)?;
+    let account = *created.session.account_id();
+
+    // The current password must be right.
+    assert_eq!(
+        change_password(
+            &transport,
+            &server,
+            &email,
+            &secret_key,
+            "wrong-password",
+            NEW_PASSWORD,
+            &account
+        )
+        .err(),
+        Some(AppError::WrongPassword)
+    );
+
+    let (fresh, offline) = change_password(
+        &transport,
+        &server,
+        &email,
+        &secret_key,
+        PASSWORD,
+        NEW_PASSWORD,
+        &account,
+    )?;
+    // The old session ended; the one used for the change carries on.
+    assert_eq!(
+        recovery_key_set(&transport, &created).err(),
+        Some(AppError::SignedOut)
+    );
+    assert!(!recovery_key_set(&transport, &fresh)?);
+    // The offline record follows the new password.
+    assert!(offline.unlock(PASSWORD, &secret_key).is_err());
+    assert_eq!(
+        offline.unlock(NEW_PASSWORD, &secret_key)?.account_id,
+        account
+    );
+
+    assert_eq!(
+        sign_in(&transport, &server, &email, &secret_key, PASSWORD).err(),
+        Some(AppError::WrongCredentials)
+    );
+    let (again, _) = sign_in(&transport, &server, &email, &secret_key, NEW_PASSWORD)?;
+    assert_eq!(again.session.account_id(), &account);
+    assert_eq!(again.key_set_version, created.key_set_version);
+    Ok(())
+}
+
+#[test]
+#[ignore = "needs a running server and BLACKBOXUS_LOG_KEY"]
+fn checking_our_own_keys_in_the_log() -> Result<(), AppError> {
+    use blackboxus_desktop::vaults::{VaultFiles, Vaults, log_key};
+
+    let transport = Https::new();
+    let server = ServerIdentity::new(ORIGIN)?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let email = format!("selfcheck-{nonce}@example.com");
+    let dir = std::env::temp_dir().join(format!("blackboxus-live-{nonce}"));
+    let (unlocked, _, _, _) = create_account(&transport, &server, &email, PASSWORD)?;
+    let mut vaults = Vaults::new(VaultFiles::new(dir.clone()), log_key()?);
+
+    // The real server lists only this account's own keys.
+    assert!(!vaults.check_own_keys(&transport, &unlocked, 1_000)?);
+    assert!(dir.join("self-check.json").exists());
+    // Within a day it is not asked again; after a day it is.
+    assert!(!vaults.check_own_keys(&transport, &unlocked, 2_000)?);
+    assert!(!vaults.check_own_keys(&transport, &unlocked, 1_000 + 86_400_000)?);
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}

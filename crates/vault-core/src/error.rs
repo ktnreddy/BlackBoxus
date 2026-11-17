@@ -117,6 +117,11 @@ pub enum Error {
     /// A key transparency proof did not verify.
     #[error("key transparency proof is invalid")]
     InvalidProof,
+
+    /// The key transparency log records keys for this account that it did
+    /// not publish, or is missing the ones it did (spec section 9.5).
+    #[error("the key log lists keys this account did not publish")]
+    UnknownKeys,
 }
 
 /// Why a Secret Key string was rejected.

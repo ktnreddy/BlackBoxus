@@ -43,6 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "create_recovery_key",
             "remove_recovery_key",
             "recover_account",
+            "change_password",
             "create_vault",
             "rename_vault",
             "browser_status",

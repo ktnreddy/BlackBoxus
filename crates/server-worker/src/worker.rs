@@ -18,7 +18,8 @@ use server_core::log::MAX_ENTRY_BYTES;
 use server_core::login::OpaqueServer;
 use server_core::prelogin::FakeSaltKey;
 use server_core::recovery::{
-    NewPassword, RecoveryRecord, accept_recovery_key, recovery_finish, recovery_start,
+    NewPassword, RecoveryRecord, accept_recovery_key, change_password, recovery_finish,
+    recovery_start,
 };
 use server_core::transparency::KtLog;
 use server_core::vaults::{
@@ -46,9 +47,9 @@ use crate::http::{
 };
 use wire::{
     ItemJson, ItemsResponse, LogAppendRequest, LogAppendResponse, LogResponse,
-    RecoveryFinishRequest, RecoveryPutRequest, RecoveryStartRequest, RecoveryStartResponse,
-    SharePostRequest, SharesResponse, VaultKeyPutRequest, VaultKeysResponse, VaultListResponse,
-    VaultSummary,
+    PasswordChangeRequest, RecoveryFinishRequest, RecoveryPutRequest, RecoveryStartRequest,
+    RecoveryStartResponse, SharePostRequest, SharesResponse, VaultKeyPutRequest, VaultKeysResponse,
+    VaultListResponse, VaultSummary,
 };
 
 /// Largest OPAQUE message or state accepted from a client or storage.
@@ -209,6 +210,8 @@ async fn handle(req: &mut Request, env: &Env, now: u64) -> Answer {
         }
         Route::RecoveryStart => recovery_start_handler(req, &db, &ip, now).await,
         Route::RecoveryFinish => recovery_finish_handler(req, &db, &ip, now).await,
+        Route::Password => password_change(req, &db, api, now).await,
+        Route::OwnLeaves => own_leaves(req, &db, api, now).await,
         Route::NotImplemented => Err(ApiError::NotImplemented),
     }
 }
@@ -548,20 +551,7 @@ async fn recovery_finish_handler(req: &mut Request, db: &D1Database, ip: &str, n
     // The new password replaces the old one and every session ends, in one
     // transaction. Pending logins for the old password are dropped too.
     let statements = vec![
-        stmt(
-            db,
-            "UPDATE accounts SET salt = ?2, kdf_m = ?3, kdf_t = ?4, kdf_p = ?5, \
-             opaque_record = ?6, wrapped_key_set = ?7 WHERE account_id = ?1",
-            &[
-                account_id.clone(),
-                text(&b64(record.salt.as_bytes())),
-                num(u64::from(record.kdf.memory_kib)),
-                num(u64::from(record.kdf.iterations)),
-                num(u64::from(record.kdf.parallelism)),
-                text(&b64(&record.opaque_record)),
-                text(&b64(&record.wrapped_key_set)),
-            ],
-        )?,
+        update_password(db, &record)?,
         stmt(
             db,
             "DELETE FROM sessions WHERE account_id = ?1",
@@ -578,6 +568,66 @@ async fn recovery_finish_handler(req: &mut Request, db: &D1Database, ip: &str, n
             db,
             "DELETE FROM limits WHERE key = ?1",
             &[text(&http::LOGIN_FAILURES.key(record.identity.as_bytes()))],
+        )?,
+    ];
+    db.batch(statements).await.map_err(storage)?;
+    Ok("{}".into())
+}
+
+/// Stores an account's new master password (salt, KDF parameters, OPAQUE
+/// record and wrapped key set).
+fn update_password(
+    db: &D1Database,
+    record: &AccountRecord,
+) -> Result<D1PreparedStatement, ApiError> {
+    stmt(
+        db,
+        "UPDATE accounts SET salt = ?2, kdf_m = ?3, kdf_t = ?4, kdf_p = ?5, \
+         opaque_record = ?6, wrapped_key_set = ?7 WHERE account_id = ?1",
+        &[
+            text(&b64(record.account_id.as_bytes())),
+            text(&b64(record.salt.as_bytes())),
+            num(u64::from(record.kdf.memory_kib)),
+            num(u64::from(record.kdf.iterations)),
+            num(u64::from(record.kdf.parallelism)),
+            text(&b64(&record.opaque_record)),
+            text(&b64(&record.wrapped_key_set)),
+        ],
+    )
+}
+
+async fn password_change(req: &mut Request, db: &D1Database, api: &Api, now: u64) -> Answer {
+    let session = authenticate(req, db, api, now).await?;
+    require_fresh_session(&session, now)?;
+    let r: PasswordChangeRequest = body(req).await?;
+    let account = account_by_id(db, &session.account_id)
+        .await?
+        .ok_or(ApiError::Storage)?;
+    let upload = unb64(&r.upload, MAX_OPAQUE_BYTES)?;
+    let wrapped = unb64(&r.wrapped_key_set, WRAPPED_KEY_SET_LEN)?;
+    let record = change_password(
+        &account,
+        &NewPassword {
+            registration_upload: &upload,
+            salt: AccountSalt::from_bytes(unb64_array(&r.salt)?),
+            kdf: KdfParams::from(r.kdf),
+            wrapped_key_set: &wrapped,
+        },
+    )?;
+    let account_id = text(&b64(record.account_id.as_bytes()));
+    // The new password replaces the old one and every other session ends,
+    // in one transaction, so a stolen session token stops working too.
+    let statements = vec![
+        update_password(db, &record)?,
+        stmt(
+            db,
+            "DELETE FROM sessions WHERE account_id = ?1 AND token_hash != ?2",
+            &[account_id.clone(), text(&b64(&session.token_hash))],
+        )?,
+        stmt(
+            db,
+            "DELETE FROM logins WHERE account_id = ?1",
+            core::slice::from_ref(&account_id),
         )?,
     ];
     db.batch(statements).await.map_err(storage)?;
@@ -608,11 +658,19 @@ async fn account_keys(
     )
     .await?
     .ok_or(ApiError::Storage)?;
+    let (log, head) = current_tree(db, api, now).await?;
+    let leaf_bytes = unb64(&leaf.leaf, vault_core::transparency::LEAF_LEN)?;
+    let response =
+        Api::key_lookup_with_head(&log, &account, &leaf_bytes, leaf.leaf_index, seen, head)?;
+    json(&http::lookup_json(response))
+}
+
+/// The key log and its current signed tree head. Tree heads are signed
+/// lazily, by the first lookup after the log grows, which keeps
+/// registration well inside the CPU budget.
+async fn current_tree(db: &D1Database, api: &Api, now: u64) -> Result<(KtLog, Vec<u8>), ApiError> {
     let state = kt_state(db).await?;
     let log = KtLog::from_stored(state.size, &unb64(&state.tree, MAX_TREE_TEXT)?)?;
-
-    // Tree heads are signed lazily, by the first lookup after the log grows,
-    // which keeps registration well inside the CPU budget.
     let head = match state.sth {
         Some(sth) if state.sth_size == Some(state.size) => {
             unb64(&sth, vault_core::transparency::SIGNED_TREE_HEAD_LEN)?
@@ -628,10 +686,31 @@ async fn account_keys(
             sth
         }
     };
-    let leaf_bytes = unb64(&leaf.leaf, vault_core::transparency::LEAF_LEN)?;
-    let response =
-        Api::key_lookup_with_head(&log, &account, &leaf_bytes, leaf.leaf_index, seen, head)?;
-    json(&http::lookup_json(response))
+    Ok((log, head))
+}
+
+async fn own_leaves(req: &mut Request, db: &D1Database, api: &Api, now: u64) -> Answer {
+    let session = authenticate(req, db, api, now).await?;
+    let seen = http::parse_seen(req.url().map_err(|_| MALFORMED)?.query())?;
+    let rows: Vec<LeafRow> = all(
+        db,
+        "SELECT leaf_index, leaf FROM kt_leaves WHERE account_id = ?1 \
+         ORDER BY leaf_index LIMIT 1001",
+        &[text(&b64(session.account_id.as_bytes()))],
+    )
+    .await?;
+    let leaves = rows
+        .iter()
+        .map(|r| {
+            Ok((
+                r.leaf_index,
+                unb64(&r.leaf, vault_core::transparency::LEAF_LEN)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    let (log, head) = current_tree(db, api, now).await?;
+    let response = Api::own_leaves(&log, &leaves, seen, head)?;
+    json(&http::own_leaves_json(response))
 }
 
 async fn enrolment_put(

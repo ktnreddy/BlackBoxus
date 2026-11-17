@@ -284,6 +284,23 @@ pub struct OfflineRecord {
     wrapped: Vec<u8>,
 }
 
+impl OfflineRecord {
+    /// A record for a key set just wrapped under a new master password.
+    pub(crate) const fn new(
+        account_id: AccountId,
+        salt: AccountSalt,
+        kdf: KdfParams,
+        wrapped: Vec<u8>,
+    ) -> Self {
+        Self {
+            account_id,
+            salt,
+            kdf,
+            wrapped,
+        }
+    }
+}
+
 impl core::fmt::Debug for OfflineRecord {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("OfflineRecord")

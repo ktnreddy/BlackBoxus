@@ -250,6 +250,9 @@ pub(crate) struct Synced {
     vaults: Vec<VaultSummary>,
     /// The server could not be reached: these are this computer's copies.
     offline: bool,
+    /// The key log records keys for this account that it did not publish
+    /// (spec section 9.5).
+    unknown_keys: bool,
 }
 
 /// Syncs every vault with the server and lists them. Without a connection,
@@ -268,9 +271,22 @@ pub(crate) async fn sync_vaults(app: AppHandle) -> Result<Synced, AppError> {
             })?;
         state.set_offline(offline);
         state.with_session(|s| {
+            let unknown_keys = if offline {
+                false
+            } else {
+                match s
+                    .vaults
+                    .check_own_keys(&state.transport, &s.unlocked, now_ms())
+                {
+                    // A lost connection only postpones the check.
+                    Err(AppError::Offline) => false,
+                    other => other?,
+                }
+            };
             Ok(Synced {
                 vaults: s.vaults.summaries(&s.unlocked),
                 offline,
+                unknown_keys,
             })
         })
     })
@@ -820,6 +836,50 @@ pub(crate) async fn remove_recovery_key(
             &password,
             &account_id_of(&record)?,
         )
+    })
+    .await
+}
+
+/// Changes the master password after the current one is entered. The
+/// account carries on with the session used for the change, since the
+/// server ends every other one; the offline unlock record and the Windows
+/// Hello session are replaced too.
+#[tauri::command]
+pub(crate) async fn change_password(
+    app: AppHandle,
+    current: Zeroizing<String>,
+    password: Zeroizing<String>,
+    confirm: Zeroizing<String>,
+) -> Result<(), AppError> {
+    blocking(app, move |state| {
+        state.require_online()?;
+        state.with_session(|_| Ok(()))?;
+        if current.is_empty() {
+            return Err(AppError::EmptyPassword);
+        }
+        let record = state.account().ok_or(AppError::NoAccount)?;
+        check_new_password(&record.email, &password, &confirm)?;
+        if *password == *current {
+            return Err(AppError::SamePassword);
+        }
+        let secret_key = state.storage.secret_key(&record)?;
+        let (unlocked, offline) = flows::change_password(
+            &state.transport,
+            &server()?,
+            &record.email,
+            &secret_key,
+            &current,
+            &password,
+            &account_id_of(&record)?,
+        )?;
+        state.storage.save_offline(&offline)?;
+        state
+            .device
+            .password_used(&unlocked, crate::state::now_ms())?;
+        state.with_session(|s| {
+            s.unlocked = unlocked;
+            Ok(())
+        })
     })
     .await
 }

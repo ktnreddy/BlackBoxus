@@ -57,6 +57,8 @@ struct Server {
     swap_bundles: bool,
     vaults: Vaults,
     recovery: HashMap<AccountId, RecoveryRecord>,
+    /// Leaves a malicious server added for existing accounts.
+    rogue_leaves: Vec<(AccountId, u64, Vec<u8>)>,
 }
 
 /// An item's revision, envelope (none if deleted) and log sequence.
@@ -96,6 +98,7 @@ impl Server {
             swap_bundles: false,
             vaults: Vaults::default(),
             recovery: HashMap::new(),
+            rogue_leaves: Vec::new(),
         }
     }
 
@@ -296,6 +299,37 @@ impl Server {
                 *a = record;
                 Ok("{}".into())
             }
+            Route::Password => {
+                let s = self.session(req)?;
+                server_core::api::require_fresh_session(&s, self.now)?;
+                let r: http::PasswordChangeRequest = http::parse_json(body.as_bytes())?;
+                let upload = http::unb64(&r.upload, 1024)?;
+                let wrapped = http::unb64(&r.wrapped_key_set, 175)?;
+                let account = self
+                    .accounts
+                    .iter()
+                    .find(|a| a.account_id == s.account_id)
+                    .unwrap();
+                let record = server_core::recovery::change_password(
+                    account,
+                    &NewPassword {
+                        registration_upload: &upload,
+                        salt: AccountSalt::from_bytes(http::unb64_array(&r.salt)?),
+                        kdf: KdfParams::from(r.kdf),
+                        wrapped_key_set: &wrapped,
+                    },
+                )?;
+                self.sessions.retain(|hash, other| {
+                    other.account_id != record.account_id || *hash == s.token_hash
+                });
+                let a = self
+                    .accounts
+                    .iter_mut()
+                    .find(|a| a.account_id == record.account_id)
+                    .unwrap();
+                *a = record;
+                Ok("{}".into())
+            }
             Route::AccountKeys(id) => {
                 self.session(req)?;
                 let seen = http::parse_seen(Some(query))?;
@@ -315,6 +349,26 @@ impl Server {
                     .api
                     .key_lookup(&self.log, &account, leaf, *index, seen, self.now)?;
                 json(&http::lookup_json(r))
+            }
+            Route::OwnLeaves => {
+                let s = self.session(req)?;
+                let seen = http::parse_seen(Some(query))?;
+                let mut own: Vec<(u64, Vec<u8>)> = self
+                    .leaves
+                    .get(&s.account_id)
+                    .into_iter()
+                    .cloned()
+                    .chain(
+                        self.rogue_leaves
+                            .iter()
+                            .filter(|(a, _, _)| *a == s.account_id)
+                            .map(|(_, i, l)| (*i, l.clone())),
+                    )
+                    .collect();
+                own.sort_by_key(|(i, _)| *i);
+                let head = self.api.sign_tree_head(&self.log, self.now)?;
+                let r = Api::own_leaves(&self.log, &own, seen, head)?;
+                json(&http::own_leaves_json(r))
             }
             Route::EnrolmentPut(id) => {
                 self.session(req)?;
@@ -690,6 +744,75 @@ fn key_lookups_are_verified_and_substitution_is_caught() {
             .verify(&bob.account_id, &server.send(&req))
             .unwrap_err(),
         ClientError::Crypto(vault_core::Error::InvalidSignature)
+    );
+}
+
+#[test]
+fn self_monitoring_finds_keys_published_in_our_name() {
+    use vault_core::KeySet;
+    use vault_core::log::bundle_hash;
+    use vault_core::transparency::KtLeaf;
+
+    let mut server = Server::new();
+    let alice = sign_up(&mut server, "alice@example.com");
+    sign_up(&mut server, "bob@example.com");
+    let unlocked = sign_in(
+        &mut server,
+        "alice@example.com",
+        PASSWORD,
+        &alice.secret_key,
+    )
+    .unwrap();
+    let me = *unlocked.session.account_id();
+    let mut directory = KeyDirectory::new(server.log_key.clone(), None);
+    let check = |server: &mut Server, directory: &mut KeyDirectory| {
+        let req = directory.lookup_request(&me, &unlocked.session);
+        let own = directory.verify(&me, &server.send(&req))?;
+        let req = directory.own_leaves_request(&unlocked.session);
+        directory.check_own_keys(&unlocked, &own, &server.send(&req))
+    };
+
+    // Nothing unusual: the check passes and the tree head is kept.
+    check(&mut server, &mut directory).unwrap();
+    assert_eq!(directory.tree_head().unwrap().tree_size, 2);
+    let req = directory.own_leaves_request(&unlocked.session);
+    assert!(req.path.ends_with("?seen=2"));
+
+    // The server quietly logs a second bundle for Alice, keys it could hand
+    // to people sharing with her. Her own lookup still looks fine, but the
+    // full list of her leaves gives it away.
+    let rogue = KeySet::generate()
+        .unwrap()
+        .signed_public_bundle(&me, 1)
+        .unwrap();
+    let leaf = KtLeaf {
+        account_id: me,
+        key_set_version: 1,
+        bundle_hash: bundle_hash(&rogue),
+        timestamp_ms: server.now,
+    }
+    .encode()
+    .to_vec();
+    let index = server.log.append(&leaf).unwrap();
+    server.rogue_leaves.push((me, index, leaf.clone()));
+    assert_eq!(
+        check(&mut server, &mut directory).unwrap_err(),
+        ClientError::Crypto(vault_core::Error::UnknownKeys)
+    );
+
+    // If it serves the rogue bundle as Alice's current keys, her device sees
+    // that they are not its own.
+    let mut directory = KeyDirectory::new(server.log_key.clone(), None);
+    server.leaves.insert(me, (index, leaf));
+    server
+        .accounts
+        .iter_mut()
+        .find(|a| a.account_id == me)
+        .unwrap()
+        .signed_bundle = rogue;
+    assert_eq!(
+        check(&mut server, &mut directory).unwrap_err(),
+        ClientError::Crypto(vault_core::Error::UnknownKeys)
     );
 }
 
@@ -1347,6 +1470,109 @@ fn recovering_a_forgotten_password() {
         r.open(&server.send(&req)).unwrap_err(),
         ClientError::SignedOut
     );
+}
+
+#[test]
+fn changing_the_master_password() {
+    use client_core::password::PasswordChange;
+    const NEW_PASSWORD: &str = "a brand new long passphrase";
+
+    let mut server = Server::new();
+    let alice = sign_up(&mut server, "alice@example.com");
+    let old = sign_in(
+        &mut server,
+        "alice@example.com",
+        PASSWORD,
+        &alice.secret_key,
+    )
+    .unwrap();
+    let mut vault = new_vault(&mut server, &old);
+    let req = vault
+        .put_item(&old, None, &login_item("a", "1"), 2)
+        .unwrap()
+        .1;
+    written(&server.send(&req)).unwrap();
+
+    // Too short a password is refused before anything is sent.
+    assert!(
+        PasswordChange::start(
+            "alice@example.com",
+            "short",
+            &alice.secret_key,
+            &server_id(),
+            KdfParams::MIN
+        )
+        .is_err()
+    );
+
+    // A session more than five minutes old is not enough.
+    server.now += 300_000;
+    let (change, req) = PasswordChange::start(
+        "alice@example.com",
+        NEW_PASSWORD,
+        &alice.secret_key,
+        &server_id(),
+        KdfParams::MIN,
+    )
+    .unwrap();
+    let (_, req) = change.register(&old, &server.send(&req)).unwrap();
+    assert_eq!(server.send(&req).status, 403);
+
+    // With a fresh session it works, and every other session ends.
+    let fresh = sign_in(
+        &mut server,
+        "alice@example.com",
+        PASSWORD,
+        &alice.secret_key,
+    )
+    .unwrap();
+    let (change, req) = PasswordChange::start(
+        "alice@example.com",
+        NEW_PASSWORD,
+        &alice.secret_key,
+        &server_id(),
+        KdfParams::MIN,
+    )
+    .unwrap();
+    let (changing, req) = change.register(&fresh, &server.send(&req)).unwrap();
+    let offline = changing.complete(&server.send(&req)).unwrap();
+    assert_eq!(
+        sync(&mut server, &mut vault, &old).unwrap_err(),
+        ClientError::SignedOut
+    );
+    sync(&mut server, &mut vault, &fresh).unwrap();
+
+    // The old password stops working; the new one opens the same key set
+    // with the same Secret Key, and the vault is intact.
+    assert!(
+        sign_in(
+            &mut server,
+            "alice@example.com",
+            PASSWORD,
+            &alice.secret_key
+        )
+        .is_err()
+    );
+    let again = sign_in(
+        &mut server,
+        "alice@example.com",
+        NEW_PASSWORD,
+        &alice.secret_key,
+    )
+    .unwrap();
+    assert_eq!(again.key_set_version, old.key_set_version);
+    assert_eq!(
+        again.key_set.identity().public_key().to_bytes(),
+        old.key_set.identity().public_key().to_bytes()
+    );
+    let mut copy = VaultReplica::new(*vault.vault_id());
+    sync(&mut server, &mut copy, &again).unwrap();
+    assert_eq!(titles(&copy), ["a"]);
+
+    // The new offline record opens with the new password only.
+    assert!(offline.unlock(PASSWORD, &alice.secret_key).is_err());
+    let opened = offline.unlock(NEW_PASSWORD, &alice.secret_key).unwrap();
+    assert_eq!(&opened.account_id, old.session.account_id());
 }
 
 #[test]

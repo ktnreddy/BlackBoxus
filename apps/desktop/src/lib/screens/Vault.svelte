@@ -53,6 +53,8 @@
   /** Showing this computer's copy because the server can't be reached. */
   let offline = $state(false);
   let notice = $state("");
+  /** The key log lists keys for this account that it did not publish. */
+  let unknownKeys = $state(false);
   let sharing = $state(false);
   let generatorOpen = $state(false);
   let importOpen = $state(false);
@@ -89,6 +91,7 @@
       const synced = await syncVaults();
       vaults = synced.vaults;
       offline = synced.offline;
+      unknownKeys = synced.unknown_keys;
       if (!vaults.some((v) => v.id === vaultId)) vaultId = vaults[0]?.id ?? null;
       syncedAt = Date.now();
       await refreshItems();
@@ -183,7 +186,12 @@
   ];
 </script>
 
-{#if syncing}
+{#if unknownKeys}
+  <StatusBar icon="alert" tone="danger">
+    Warning: the public key log lists keys for your account that you didn't make. Someone may be
+    posing as you to people who share with you. Don't share vaults until this is resolved.
+  </StatusBar>
+{:else if syncing}
   <StatusBar icon="refresh" tone="quiet">Syncing and checking your vaults…</StatusBar>
 {:else if offline}
   <StatusBar icon="alert" tone="quiet">

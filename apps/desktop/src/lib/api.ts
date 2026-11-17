@@ -129,7 +129,11 @@ export interface ItemInput {
   fields: FieldInput[];
 }
 
-export function syncVaults(): Promise<{ vaults: VaultSummary[]; offline: boolean }> {
+export function syncVaults(): Promise<{
+  vaults: VaultSummary[];
+  offline: boolean;
+  unknown_keys: boolean;
+}> {
   return invoke("sync_vaults");
 }
 
@@ -320,6 +324,10 @@ export function createRecoveryKey(password: string): Promise<EmergencyKit> {
 
 export function removeRecoveryKey(password: string): Promise<void> {
   return invoke<void>("remove_recovery_key", { password });
+}
+
+export function changePassword(current: string, password: string, confirm: string): Promise<void> {
+  return invoke<void>("change_password", { current, password, confirm });
 }
 
 export function recoverAccount(

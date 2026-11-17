@@ -97,7 +97,7 @@ pub fn recovery_start(
     Ok((account.account_id, recovery.wrapped_key_set.clone()))
 }
 
-/// A new master password set during recovery.
+/// A new master password, set by a password change or a recovery.
 #[derive(Debug, Clone)]
 pub struct NewPassword<'a> {
     /// OPAQUE registration upload.
@@ -124,6 +124,20 @@ pub fn recovery_finish(
     new: &NewPassword<'_>,
 ) -> Result<AccountRecord> {
     let (account, _) = check_token(found, token)?;
+    change_password(account, new)
+}
+
+/// `POST /v1/password` (spec section 12.7): returns the account record to
+/// store in place of the old one. The session must be fresh
+/// ([`crate::api::require_fresh_session`]), and the adapter MUST also end
+/// every other session of the account and its pending logins, atomically.
+/// Recovery uses the same checks.
+///
+/// # Errors
+///
+/// Returns [`Error::MalformedMessage`] if the KDF parameters, the OPAQUE
+/// registration upload or the wrapped key set are invalid.
+pub fn change_password(account: &AccountRecord, new: &NewPassword<'_>) -> Result<AccountRecord> {
     new.kdf.validate().map_err(|_| Error::MalformedMessage)?;
     let opaque_record = finish_registration(new.registration_upload)?;
     check_wrapped_key_set(new.wrapped_key_set, account.key_set_version)?;
@@ -479,5 +493,68 @@ mod tests {
             recovery_finish(Some((&record, &stored)), token.as_bytes(), &bad),
             Err(Error::MalformedMessage)
         );
+    }
+
+    #[test]
+    fn changing_the_password() {
+        use crate::login::OpaqueServer;
+        use vault_core::login::start_registration;
+
+        let keys = KeySet::generate().unwrap();
+        let (record, _) = account(&RecoveryKey::generate().unwrap(), &keys);
+        let opaque = OpaqueServer::generate();
+        let password = vault_core::SymmetricKey::from_bytes([8; 32]);
+        let (state, request) = start_registration(&password).unwrap();
+        let response = opaque
+            .registration_response(&request, &record.identity)
+            .unwrap();
+        let upload = state
+            .finish(
+                &password,
+                &response,
+                &record.identity,
+                &vault_core::ServerIdentity::new("https://api.blackboxus.test").unwrap(),
+            )
+            .unwrap();
+        let unlock = vault_core::SymmetricKey::from_bytes([9; 32]);
+        let wrapped = keys
+            .wrap(&unlock, &OWNER, 1, UnlockMethod::MasterPassword)
+            .unwrap();
+        let new = NewPassword {
+            registration_upload: &upload,
+            salt: AccountSalt::from_bytes([3; 16]),
+            kdf: KdfParams::MIN,
+            wrapped_key_set: &wrapped,
+        };
+        let updated = change_password(&record, &new).unwrap();
+        assert_eq!(updated.salt, AccountSalt::from_bytes([3; 16]));
+        assert_eq!(updated.wrapped_key_set, wrapped);
+        assert_ne!(updated.opaque_record, record.opaque_record);
+        assert_eq!(updated.identity, record.identity);
+        assert_eq!(updated.signed_bundle, record.signed_bundle);
+
+        // Another method, a garbled upload or weak parameters are refused.
+        let recovery_copy = keys
+            .wrap(&unlock, &OWNER, 1, UnlockMethod::Recovery)
+            .unwrap();
+        for bad in [
+            NewPassword {
+                wrapped_key_set: &recovery_copy,
+                ..new.clone()
+            },
+            NewPassword {
+                registration_upload: &upload[1..],
+                ..new.clone()
+            },
+            NewPassword {
+                kdf: KdfParams {
+                    memory_kib: 1024,
+                    ..KdfParams::MIN
+                },
+                ..new.clone()
+            },
+        ] {
+            assert_eq!(change_password(&record, &bad), Err(Error::MalformedMessage));
+        }
     }
 }

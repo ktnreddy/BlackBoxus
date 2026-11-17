@@ -12,6 +12,7 @@
 //! - [`keys`]: look up other accounts' keys through key transparency
 //!   (spec section 9).
 //! - [`enrolment`]: add a device by QR code (spec section 10.3).
+//! - [`password`]: change the master password (spec section 3.9).
 //! - [`recovery`]: set up a recovery key, and recover an account with it
 //!   (spec section 11).
 //! - [`vaults`]: create, sync, edit and share vaults, keeping a verified,
@@ -23,6 +24,7 @@ mod http;
 pub mod enrolment;
 pub mod keys;
 pub mod login;
+pub mod password;
 pub mod recovery;
 pub mod signup;
 pub mod vaults;

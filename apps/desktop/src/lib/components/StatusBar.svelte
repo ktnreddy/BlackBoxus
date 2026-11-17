@@ -6,10 +6,15 @@
     icon,
     tone = "accent",
     children,
-  }: { icon: IconName; tone?: "accent" | "quiet"; children: Snippet } = $props();
+  }: { icon: IconName; tone?: "accent" | "quiet" | "danger"; children: Snippet } = $props();
 </script>
 
-<div class="bar" class:quiet={tone === "quiet"} role="status">
+<div
+  class="bar"
+  class:quiet={tone === "quiet"}
+  class:danger={tone === "danger"}
+  role={tone === "danger" ? "alert" : "status"}
+>
   <Icon name={icon} size={15} />
   {@render children()}
 </div>
@@ -26,6 +31,15 @@
     gap: 8px;
     font-size: 13px;
     font-weight: 500;
+  }
+  .danger {
+    background: #3a1414;
+    color: #ffc9c9;
+    border-bottom: 1px solid #6b2a2a;
+    height: auto;
+    min-height: 36px;
+    padding: 8px 24px;
+    text-align: center;
   }
   .quiet {
     background: #1a120c;

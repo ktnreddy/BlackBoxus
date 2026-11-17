@@ -45,6 +45,7 @@
     "allow-create-recovery-key",
     "allow-remove-recovery-key",
     "allow-recover-account",
+    "allow-change-password",
     "allow-create-vault",
     "allow-rename-vault",
     "allow-browser-status",

@@ -200,6 +200,28 @@ pub struct KeyLookupJson {
     pub consistency_proof: Vec<String>,
 }
 
+/// One leaf in the answer to `GET /v1/accounts/self/leaves`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OwnLeafJson {
+    /// The log leaf.
+    pub leaf: String,
+    /// Its index.
+    pub leaf_index: u64,
+    /// Inclusion proof.
+    pub inclusion_proof: Vec<String>,
+}
+
+/// Answer to `GET /v1/accounts/self/leaves`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OwnLeavesJson {
+    /// Every leaf for this account, in log order.
+    pub leaves: Vec<OwnLeafJson>,
+    /// Signed tree head.
+    pub signed_tree_head: String,
+    /// Consistency proof from `seen`.
+    pub consistency_proof: Vec<String>,
+}
+
 /// `PUT /v1/enrolment/{session_id}`
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -336,6 +358,20 @@ pub struct RecoveryStartResponse {
     /// The account's ID. A wrong value only makes unwrapping fail.
     pub account_id: String,
     /// Key set wrapped with method 4.
+    pub wrapped_key_set: String,
+}
+
+/// `POST /v1/password`
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PasswordChangeRequest {
+    /// OPAQUE registration upload for the new master password.
+    pub upload: String,
+    /// New Argon2id salt.
+    pub salt: String,
+    /// Argon2id parameters.
+    pub kdf: KdfJson,
+    /// Key set wrapped with method 1 under the new master password.
     pub wrapped_key_set: String,
 }
 

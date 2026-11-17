@@ -1,8 +1,10 @@
 <script lang="ts">
   import Icon from "../../components/Icon.svelte";
+  import NewPasswordFields from "../../components/NewPasswordFields.svelte";
   import PasswordField from "../../components/PasswordField.svelte";
   import {
     browserStatus,
+    changePassword,
     createRecoveryKey,
     forgetBrowser,
     setBrowserIntegration,
@@ -111,6 +113,41 @@
     } finally {
       busy = false;
     }
+  }
+
+  let changing = $state(false);
+  let currentPassword = $state("");
+  let newPassword = $state("");
+  let newConfirm = $state("");
+  let newOk = $state(false);
+
+  async function submitPasswordChange(event: SubmitEvent) {
+    event.preventDefault();
+    if (busy || !currentPassword || !newOk) return;
+    busy = true;
+    error = "";
+    const current = currentPassword;
+    const next = newPassword;
+    const again = newConfirm;
+    currentPassword = "";
+    try {
+      await changePassword(current, next, again);
+      newPassword = "";
+      newConfirm = "";
+      changing = false;
+      onnotice("Master password changed. Your other devices need the new one to sign in.");
+    } catch (e) {
+      error = errorMessage(e);
+    } finally {
+      busy = false;
+    }
+  }
+
+  function cancelPasswordChange() {
+    changing = false;
+    currentPassword = "";
+    newPassword = "";
+    newConfirm = "";
   }
 
   async function toggleHello() {
@@ -225,6 +262,51 @@
           >
         {/each}
       </div>
+    </div>
+
+    <div class="setting column">
+      <div class="text">
+        <span class="name"><Icon name="key" size={18} />Master password</span>
+        <span class="small">
+          {#if offline}
+            Connect to the internet to change your master password.
+          {:else}
+            Choose a new master password. Your vaults and Secret Key stay the same. Your other
+            devices are signed out and need the new password to sign in again.
+          {/if}
+        </span>
+      </div>
+      {#if changing}
+        <form class="stack" onsubmit={submitPasswordChange}>
+          <PasswordField
+            id="current-password"
+            label="Current master password"
+            bind:value={currentPassword}
+            autocomplete="current-password"
+            disabled={busy}
+          />
+          <NewPasswordFields
+            email={status.account?.email ?? ""}
+            label="New master password"
+            bind:password={newPassword}
+            bind:confirm={newConfirm}
+            bind:ok={newOk}
+            disabled={busy}
+          />
+          <div class="row">
+            <button type="submit" class="btn ghost" disabled={busy || !currentPassword || !newOk}>
+              {busy ? "Changing…" : "Change password"}
+            </button>
+            <button type="button" class="btn ghost" disabled={busy} onclick={cancelPasswordChange}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      {:else if !offline}
+        <button type="button" class="btn ghost sm start" onclick={() => (changing = true)}>
+          Change master password
+        </button>
+      {/if}
     </div>
 
     <div class="setting column">
@@ -437,6 +519,12 @@
   }
   .kit-form > :global(div) {
     flex: 1;
+  }
+  .stack {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    width: 100%;
   }
   .seg {
     display: inline-flex;

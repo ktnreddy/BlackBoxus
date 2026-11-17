@@ -406,4 +406,103 @@ mod tests {
         assert!(log.root(6).is_err());
         assert_eq!(KtLog::new().root(0).unwrap(), empty_root());
     }
+
+    #[test]
+    fn self_monitoring_catches_keys_the_account_did_not_publish() {
+        use crate::api::Api;
+        use vault_core::log::bundle_hash;
+        use vault_core::transparency::{KtLeaf, OwnLeaf, OwnLeaves, verify_own_leaves};
+        use vault_core::{AccountId, Error as CoreError, IdentitySecretKey, KeySet};
+
+        let me = AccountId::from_bytes([7; 16]);
+        let other = AccountId::from_bytes([8; 16]);
+        let mine = KeySet::generate()
+            .unwrap()
+            .signed_public_bundle(&me, 1)
+            .unwrap();
+        let theirs = KeySet::generate()
+            .unwrap()
+            .signed_public_bundle(&me, 1)
+            .unwrap();
+        let rec = |account, version, bundle: &[u8]| {
+            KtLeaf {
+                account_id: account,
+                key_set_version: version,
+                bundle_hash: bundle_hash(bundle),
+                timestamp_ms: 5,
+            }
+            .encode()
+            .to_vec()
+        };
+        let key = IdentitySecretKey::generate().unwrap();
+        let public = key.public_key();
+        let check = |entries: &[(AccountId, u32, &[u8])], mine_at: &[usize], last| {
+            let mut log = KtLog::new();
+            let leaves: Vec<Vec<u8>> = entries.iter().map(|(a, v, b)| rec(*a, *v, b)).collect();
+            for l in &leaves {
+                log.append(l).unwrap();
+            }
+            let head = log.signed_tree_head(&key, 9).unwrap();
+            let own: Vec<(u64, Vec<u8>)> = mine_at
+                .iter()
+                .map(|&i| (i as u64, leaves[i].clone()))
+                .collect();
+            let answer = Api::own_leaves(&log, &own, None, head).unwrap();
+            let items: Vec<OwnLeaf<'_>> = answer
+                .leaves
+                .iter()
+                .map(|l| OwnLeaf {
+                    leaf: &l.leaf,
+                    leaf_index: l.leaf_index,
+                    inclusion_proof: &l.inclusion_proof,
+                })
+                .collect();
+            verify_own_leaves(
+                &me,
+                &mine,
+                &OwnLeaves {
+                    leaves: &items,
+                    signed_tree_head: &answer.signed_tree_head,
+                    consistency_proof: &answer.consistency_proof,
+                },
+                &public,
+                last,
+            )
+        };
+
+        // Only its own bundle: clean, among other accounts' leaves.
+        let head = check(&[(other, 1, &theirs), (me, 1, &mine)], &[1], None).unwrap();
+        assert_eq!(head.tree_size, 2);
+        // A second bundle at the same version, which a malicious server
+        // could hand to people sharing with this account, is caught.
+        assert_eq!(
+            check(&[(me, 1, &mine), (me, 1, &theirs)], &[0, 1], None),
+            Err(CoreError::UnknownKeys)
+        );
+        // So is a newer version, and a log that leaves out its own bundle.
+        assert_eq!(
+            check(&[(me, 1, &mine), (me, 2, &theirs)], &[0, 1], None),
+            Err(CoreError::UnknownKeys)
+        );
+        assert_eq!(
+            check(&[(me, 1, &mine)], &[], None),
+            Err(CoreError::UnknownKeys)
+        );
+        // Another account's leaf passed off as this one's is refused.
+        assert_eq!(
+            check(&[(other, 1, &mine), (me, 1, &mine)], &[0, 1], None),
+            Err(CoreError::LogMismatch)
+        );
+        // A tree smaller than one seen before is a rollback.
+        let bigger = check(
+            &[(other, 1, &theirs), (other, 1, &theirs), (me, 1, &mine)],
+            &[2],
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            check(&[(me, 1, &mine)], &[0], Some(&bigger)),
+            Err(CoreError::LogRollback)
+        );
+    }
 }
