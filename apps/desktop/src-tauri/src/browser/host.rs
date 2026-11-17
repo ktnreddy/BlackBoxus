@@ -1,5 +1,6 @@
 //! Native messaging host mode (spec section 14.2). The browser starts this
-//! app's executable with the extension's origin as an argument; it then
+//! app's executable with the extension's origin (Chromium) or the
+//! manifest's path and the add-on's ID (Firefox) as arguments; it then
 //! relays messages between the browser (standard input and output) and the
 //! running app (the local socket), and does nothing else. It holds no keys
 //! and reads no files.
@@ -15,9 +16,9 @@ use super::socket_name;
 
 /// Whether the browser started this process as a native messaging host.
 pub fn launched_by_browser(args: &[String]) -> bool {
-    args.iter()
-        .skip(1)
-        .any(|a| a.starts_with("chrome-extension://"))
+    args.iter().skip(1).any(|a| {
+        a.starts_with("chrome-extension://") || super::register::FIREFOX_IDS.contains(&a.as_str())
+    })
 }
 
 fn connect() -> io::Result<Stream> {
@@ -85,6 +86,12 @@ mod tests {
             "chrome-extension://abcdefghijklmnopabcdefghijklmnop/",
             "--parent-window=0"
         ])));
+        assert!(launched_by_browser(&args(&[
+            "blackboxus.exe",
+            r"C:\Users\a\AppData\Roaming\com.blackboxus.desktop\com.blackboxus.desktop.firefox.json",
+            "{7ee1ca63-9148-4233-a256-ff54b5fbbdc9}",
+        ])));
+        assert!(!launched_by_browser(&args(&["blackboxus.exe", "{other}"])));
         assert!(!launched_by_browser(&args(&["blackboxus.exe"])));
         assert!(!launched_by_browser(&args(&["chrome-extension://x/"])));
     }

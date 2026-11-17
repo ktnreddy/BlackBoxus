@@ -5,6 +5,7 @@
 # Node / web tooling
 node_modules/
 dist/
+dist-firefox/
 .wrangler/
 crates/server-worker/build/
 
