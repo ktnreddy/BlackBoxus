@@ -25,3 +25,8 @@ updates:
     directory: /apps/desktop
     schedule:
       interval: weekly
+
+  - package-ecosystem: npm
+    directory: /apps/extension
+    schedule:
+      interval: weekly

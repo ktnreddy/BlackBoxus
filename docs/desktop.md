@@ -24,6 +24,8 @@ Windows is the first platform. macOS and Linux builds come later.
 | Vault copies | `vaults/*.vault` in the app's data folder | Sealed with the account's key set |
 | Offline unlock record | `offline-unlock.json` | The key set wrapped for the master password, as the server keeps it |
 | Last key transparency tree head | `vaults/tree-head.json` | Public; used to catch a log that goes back in time |
+| Paired browsers' keys | Windows Credential Manager (`browser-pairings` entry) | Windows encrypts it for the signed-in user |
+| Browser host registration | `com.blackboxus.desktop.json` in the app's data folder, and a registry value per browser under `HKCU\Software\…\NativeMessagingHosts` | Nothing secret in it |
 
 The Secret Key alone cannot open anything: unlocking also needs the master
 password. Other programs running as the same Windows user can read
@@ -244,6 +246,40 @@ Known limits, to address later:
   engine's.
 - Tauri's isolation pattern (an extra check on every IPC message) is not
   enabled yet; it becomes worth it once the page has more dependencies.
+
+## Browser extension
+
+The extension in `apps/extension` fills logins in Chrome, Edge and Brave
+(spec section 14). It is off until turned on in Settings:
+
+1. Turning it on registers this app's executable as the browsers' native
+   messaging host, for the current Windows user only, and starts listening
+   on a named pipe only this user can open.
+2. Clicking the BlackBoxus button in the browser the first time asks to
+   pair. The app comes to the front and shows a six-digit code; the
+   extension shows the same code. Allow it only if they match.
+3. From then on, the button lists the logins saved for the page's site,
+   and "Fill" fills one. The keyboard shortcut (Alt+Shift+L, changeable at
+   `chrome://extensions/shortcuts`) fills the only login for the page, or
+   opens the list. Nothing happens while BlackBoxus is locked or closed.
+
+Paired browsers are listed in Settings, where each can be removed. Turning
+the extension off, or signing out, forgets them all and removes the
+registration.
+
+To load it during development:
+
+```sh
+cd apps/extension
+npm ci
+npm test            # checks the crypto against the shared test vectors
+npm run build       # writes the extension to dist/
+```
+
+Then open `chrome://extensions`, turn on Developer mode, choose "Load
+unpacked" and pick `apps/extension/dist`. The `key` in its manifest gives
+it the ID the app allows. A Chrome Web Store listing gets its own ID, which
+must be added to `EXTENSION_IDS` in `src-tauri/src/browser/register.rs`.
 
 ## Developing
 

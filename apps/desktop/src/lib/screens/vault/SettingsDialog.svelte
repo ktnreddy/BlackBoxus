@@ -2,7 +2,11 @@
   import Icon from "../../components/Icon.svelte";
   import PasswordField from "../../components/PasswordField.svelte";
   import {
+    browserStatus,
     createRecoveryKey,
+    forgetBrowser,
+    setBrowserIntegration,
+    type BrowserStatus,
     errorMessage,
     helloDisable,
     helloEnable,
@@ -42,6 +46,35 @@
   let askingPassword = $state(false);
   let password = $state("");
   let confirmSignOut = $state(false);
+
+  let browser = $state<BrowserStatus | null>(null);
+  browserStatus().then(
+    (b) => (browser = b),
+    () => {},
+  );
+
+  async function toggleBrowser() {
+    if (!browser) return;
+    busy = true;
+    error = "";
+    try {
+      browser = await setBrowserIntegration(!browser.enabled);
+      onnotice(browser.enabled ? "Browser extension turned on." : "Browser extension turned off.");
+    } catch (e) {
+      error = errorMessage(e);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function removeBrowser(id: string) {
+    error = "";
+    try {
+      browser = await forgetBrowser(id);
+    } catch (e) {
+      error = errorMessage(e);
+    }
+  }
 
   /** Whether the account has a recovery key; null until known or offline. */
   let hasRecovery = $state<boolean | null>(null);
@@ -213,6 +246,48 @@
           Show Emergency Kit
         </button>
       {/if}
+    </div>
+
+    <div class="setting">
+      <div class="text">
+        <span class="name"><Icon name="globe" size={18} />Browser extension</span>
+        <span class="small">
+          Lets the BlackBoxus extension in Chrome, Edge or Brave fill logins on this computer. It
+          asks this app for one login at a time, only when you click fill, and only while your
+          vaults are unlocked. Turning it off disconnects every browser.
+        </span>
+        {#if browser?.enabled && browser.pairings.length > 0}
+          <ul class="browsers">
+            {#each browser.pairings as p (p.id)}
+              <li>
+                <span>{p.browser}</span>
+                <span class="small"
+                  >since {new Date(p.created_ms).toLocaleDateString(undefined, {
+                    day: "numeric",
+                    month: "short",
+                    year: "numeric",
+                  })}</span
+                >
+                <button type="button" class="btn ghost sm" onclick={() => removeBrowser(p.id)}>
+                  Remove
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {:else if browser?.enabled}
+          <span class="small">No browsers yet. Click the BlackBoxus button in your browser to pair.</span>
+        {/if}
+      </div>
+      <label class="switch">
+        <span class="visually-hidden">Browser extension</span>
+        <input
+          type="checkbox"
+          role="switch"
+          checked={browser?.enabled ?? false}
+          disabled={busy || browser === null}
+          onchange={toggleBrowser}
+        />
+      </label>
     </div>
 
     <div class="setting column">
@@ -419,6 +494,23 @@
   .switch input:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+  .browsers {
+    list-style: none;
+    margin: 6px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .browsers li {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+  }
+  .browsers li button {
+    margin-left: auto;
   }
   .danger {
     background: #3a1414;

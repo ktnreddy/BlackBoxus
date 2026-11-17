@@ -27,12 +27,15 @@ const SETTINGS_FILE: &str = "settings.json";
 pub struct Settings {
     /// Lock after this many minutes without keyboard or mouse input.
     pub auto_lock_minutes: u32,
+    /// Whether the browser extension may ask for logins (spec section 14).
+    pub browser_integration: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             auto_lock_minutes: 10,
+            browser_integration: false,
         }
     }
 }
@@ -229,6 +232,46 @@ impl Storage {
     }
 }
 
+fn pairings_entry() -> Result<Entry, AppError> {
+    Entry::new(SERVICE, "browser-pairings").map_err(|_| AppError::Storage)
+}
+
+/// The paired browsers' keys, as JSON, kept in the credential store.
+///
+/// # Errors
+///
+/// Returns [`AppError::Storage`] if the store cannot be read.
+pub fn load_browser_pairings() -> Result<Option<Zeroizing<String>>, AppError> {
+    match pairings_entry()?.get_password() {
+        Ok(json) => Ok(Some(Zeroizing::new(json))),
+        Err(keyring_core::Error::NoEntry) => Ok(None),
+        Err(_) => Err(AppError::Storage),
+    }
+}
+
+/// Saves the paired browsers' keys.
+///
+/// # Errors
+///
+/// Returns [`AppError::Storage`] if the store cannot be written.
+pub fn save_browser_pairings(json: &str) -> Result<(), AppError> {
+    pairings_entry()?
+        .set_password(json)
+        .map_err(|_| AppError::Storage)
+}
+
+/// Forgets every paired browser.
+///
+/// # Errors
+///
+/// Returns [`AppError::Storage`] if the store cannot be changed.
+pub fn delete_browser_pairings() -> Result<(), AppError> {
+    match pairings_entry()?.delete_credential() {
+        Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
+        Err(_) => Err(AppError::Storage),
+    }
+}
+
 fn entry(record: &AccountRecord) -> Result<Entry, AppError> {
     Entry::new(SERVICE, &format!("secret-key/{}", record.account_id)).map_err(|_| AppError::Storage)
 }
@@ -289,8 +332,33 @@ mod tests {
         assert_eq!(storage.settings().auto_lock_minutes, 10);
         storage.save_settings(&Settings {
             auto_lock_minutes: 5,
+            browser_integration: true,
         })?;
         assert_eq!(storage.settings().auto_lock_minutes, 5);
+        assert!(storage.settings().browser_integration);
+
+        // Settings files from before the browser bridge still load.
+        std::fs::write(
+            storage.dir.join(SETTINGS_FILE),
+            br#"{"auto_lock_minutes":15}"#,
+        )
+        .map_err(|_| AppError::Storage)?;
+        assert_eq!(
+            storage.settings(),
+            Settings {
+                auto_lock_minutes: 15,
+                browser_integration: false
+            }
+        );
+
+        // Paired browsers live in the credential store.
+        save_browser_pairings("[]")?;
+        assert_eq!(
+            load_browser_pairings()?.as_deref().map(String::as_str),
+            Some("[]")
+        );
+        delete_browser_pairings()?;
+        assert_eq!(load_browser_pairings()?, None);
 
         let identity = ClientIdentity::new("remove@example.com")?;
         let record = AccountRecord::new(&identity, &AccountId::from_bytes([8; 16]), "x");
@@ -301,7 +369,7 @@ mod tests {
         assert_eq!(storage.secret_key(&record), Err(AppError::SecretKeyMissing));
         assert!(!storage.vault_dir().exists());
         // Settings are kept for whoever signs in next.
-        assert_eq!(storage.settings().auto_lock_minutes, 5);
+        assert_eq!(storage.settings().auto_lock_minutes, 15);
         Ok(())
     }
 

@@ -1,0 +1,16 @@
+{
+  "id_hex": "101112131415161718191a1b1c1d1e1f",
+  "extension_private_hex": "26f1de33979d065ba8d86789de634228e3540fee2f6e5a66eebf93f78d83077d",
+  "app_private_hex": "a172cedcae47474b615c54d510a5d84a8dea3032e958587430b413538be3f333",
+  "request_nonce_hex": "000102030405060708090a0b",
+  "request_plaintext": "{\"op\":\"logins\",\"url\":\"https://www.example.com/login\"}",
+  "response_nonce_hex": "0c0d0e0f1011121314151617",
+  "response_plaintext": "{\"logins\":[]}",
+  "extension_public_hex": "04568a3e08725b66ec98e579d82a48226cabaa38ed030c45fe6c2ab8b148280aab33e6a2b1ce551e462573b73719364f90a29859da5fb9e5ec986d1e91d557532f",
+  "app_public_hex": "0495533ba306f2526dbf1a8cee2a2e2e7be4f74559896ed0408f34ba48b21672b7ad50ca7d63c7fbd27730079df5c0c5937bbf44cdba6995e588455f715693db6f",
+  "shared_hex": "5c4e90ae3f063517d0893b03a0cf5e2070f3e2bf72cef2ee94485bd849d84c79",
+  "key_hex": "ed00f8bbe868180395b93390f2dbdc413a1a2c66e8e7fca4e7183d7cea115fed",
+  "code": "748002",
+  "request_sealed_hex": "83873a69b49b40e4a3164973e4563b018fafb03f9c591309e119379742dbc716f520ad7e141950775660452d558c926d1b666016b212b930a38341031184cbcfa32720a17a",
+  "response_sealed_hex": "d82ed2afb56815e1c16785d6a5db66eef1ab02c30761e2766602ca0ec0"
+}

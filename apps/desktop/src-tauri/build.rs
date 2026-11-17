@@ -45,6 +45,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "recover_account",
             "create_vault",
             "rename_vault",
+            "browser_status",
+            "set_browser_integration",
+            "answer_browser_pairing",
+            "forget_browser",
         ]),
     ))?;
     Ok(())

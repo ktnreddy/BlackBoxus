@@ -34,7 +34,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: apps/desktop/package-lock.json
+          cache-dependency-path: |
+            apps/desktop/package-lock.json
+            apps/extension/package-lock.json
       - name: Install desktop app build libraries
         # Tauri needs WebKitGTK to compile on Linux, even though the app
         # ships for Windows only.
@@ -46,6 +48,13 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm run check
+          npm run build
+      - name: Check, test and build the browser extension
+        working-directory: apps/extension
+        run: |
+          npm ci --no-audit --no-fund
+          npm run check
+          npm test
           npm run build
       - name: Check formatting
         run: |

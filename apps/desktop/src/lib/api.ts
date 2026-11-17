@@ -1,6 +1,7 @@
 // Typed wrappers around the commands the Rust side exposes. The webview
 // never sees keys: it sends what the user types and shows what comes back.
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 export interface AppStatus {
   version: string;
@@ -272,6 +273,8 @@ export function totpCode(vault: string, item: string, index: number): Promise<To
 }
 
 export interface Settings {
+  /** Changed only with setBrowserIntegration. */
+  browser_integration?: boolean;
   auto_lock_minutes: number;
 }
 
@@ -334,4 +337,42 @@ export function createVault(name: string): Promise<{ id: string; vaults: VaultSu
 
 export function renameVault(vault: string, name: string): Promise<VaultSummary[]> {
   return invoke<VaultSummary[]>("rename_vault", { vault, name });
+}
+
+export interface BrowserPairing {
+  id: string;
+  browser: string;
+  created_ms: number;
+}
+
+export interface PairingRequest {
+  browser: string;
+  code: string;
+}
+
+export interface BrowserStatus {
+  enabled: boolean;
+  pairings: BrowserPairing[];
+  pending: PairingRequest | null;
+}
+
+export function browserStatus(): Promise<BrowserStatus> {
+  return invoke<BrowserStatus>("browser_status");
+}
+
+export function setBrowserIntegration(enabled: boolean): Promise<BrowserStatus> {
+  return invoke<BrowserStatus>("set_browser_integration", { enabled });
+}
+
+export function answerBrowserPairing(allow: boolean): Promise<void> {
+  return invoke<void>("answer_browser_pairing", { allow });
+}
+
+export function forgetBrowser(id: string): Promise<BrowserStatus> {
+  return invoke<BrowserStatus>("forget_browser", { id });
+}
+
+/** Calls `f` whenever a browser asks to pair, or the request ends (null). */
+export function onBrowserPairing(f: (request: PairingRequest | null) => void): Promise<() => void> {
+  return listen<PairingRequest | null>("browser-pairing", (e) => f(e.payload));
 }

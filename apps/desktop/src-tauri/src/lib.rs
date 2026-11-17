@@ -5,6 +5,7 @@
 //! call the commands in `commands`, and the content security policy in
 //! `tauri.conf.json` stops it loading anything from the network.
 
+pub mod browser;
 mod clipboard;
 mod commands;
 mod device_unlock;
@@ -50,11 +51,21 @@ pub fn run() -> Result<(), StartError> {
         .setup(|app| {
             storage::init_secret_store()?;
             let dir = app.path().app_data_dir()?;
+            let storage = storage::Storage::new(dir.clone());
+            let browser_on = storage.settings().browser_integration;
             app.manage(state::AppState::new(
-                storage::Storage::new(dir.clone()),
+                storage,
                 http::Https::new(),
                 device_unlock::DeviceUnlock::new(dir, hello::provider()),
             ));
+            app.manage(browser::Bridge::default());
+            if browser_on {
+                // Registers again, in case an update moved the app, and
+                // listens. If it fails, Settings shows the bridge as off.
+                let _ = app
+                    .state::<browser::Bridge>()
+                    .set_enabled(app.handle(), true);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -99,6 +110,10 @@ pub fn run() -> Result<(), StartError> {
             commands::recover_account,
             commands::create_vault,
             commands::rename_vault,
+            commands::browser_status,
+            commands::set_browser_integration,
+            commands::answer_browser_pairing,
+            commands::forget_browser,
         ])
         .run(tauri::generate_context!())
 }

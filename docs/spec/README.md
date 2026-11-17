@@ -17,5 +17,6 @@
 | 11 | [Account recovery](11-recovery.md): recovery key, trusted-contact emergency access | Draft, implemented |
 | 12 | [Server API](12-server-api.md): endpoints, sessions, limits and the checks each one performs | Draft, implemented |
 | 13 | [Security considerations](13-security-considerations.md): guarantees, metadata, known limitations, review findings | Draft |
+| 14 | [Browser extension](14-browser-extension.md): pairing with the desktop app, sealed requests, which logins match a page, filling | Draft, implemented |
 
 Test vectors live in [`vectors/`](vectors/).

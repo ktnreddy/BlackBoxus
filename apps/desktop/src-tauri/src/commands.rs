@@ -628,6 +628,11 @@ pub(crate) fn set_settings(
     if !crate::storage::AUTO_LOCK_CHOICES.contains(&settings.auto_lock_minutes) {
         return Err(AppError::InvalidSetting);
     }
+    // The browser bridge is changed only by `set_browser_integration`.
+    let settings = crate::storage::Settings {
+        browser_integration: state.storage.settings().browser_integration,
+        ..settings
+    };
     state.storage.save_settings(&settings)?;
     Ok(settings)
 }
@@ -666,6 +671,7 @@ pub(crate) async fn show_emergency_kit(
 /// its vaults stay on the server.
 #[tauri::command]
 pub(crate) async fn sign_out(app: AppHandle) -> Result<AppStatus, AppError> {
+    let handle = app.clone();
     blocking(app, move |state| {
         let record = state.account().ok_or(AppError::NoAccount)?;
         // Best effort: end the session on the server too.
@@ -681,6 +687,8 @@ pub(crate) async fn sign_out(app: AppHandle) -> Result<AppStatus, AppError> {
                 .disable(&vault_core::AccountId::from_bytes(account))?;
         }
         state.storage.remove_account(&record)?;
+        // Paired browsers belonged to that account's use of this computer.
+        let _ = app_bridge_forget(&handle);
         state.forget_account();
         Ok(state.status())
     })
@@ -924,4 +932,66 @@ pub(crate) async fn rename_vault(
         })
     })
     .await
+}
+
+fn app_bridge_forget(app: &AppHandle) -> Result<(), AppError> {
+    app.state::<crate::browser::Bridge>().forget_all()
+}
+
+/// The browser bridge, for Settings.
+#[derive(Debug, Serialize)]
+pub(crate) struct BrowserStatus {
+    enabled: bool,
+    pairings: Vec<crate::browser::PairingView>,
+    pending: Option<crate::browser::PairingRequest>,
+}
+
+fn browser_view(app: &AppHandle) -> BrowserStatus {
+    let bridge = app.state::<crate::browser::Bridge>();
+    BrowserStatus {
+        enabled: bridge.enabled(),
+        pairings: bridge.pairings(),
+        pending: bridge.pending_request(),
+    }
+}
+
+/// Whether the browser extension may ask for logins, and which browsers
+/// are paired.
+#[tauri::command]
+pub(crate) fn browser_status(app: AppHandle) -> BrowserStatus {
+    browser_view(&app)
+}
+
+/// Turns the browser bridge on or off. Off forgets every paired browser.
+#[tauri::command]
+pub(crate) async fn set_browser_integration(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<BrowserStatus, AppError> {
+    let handle = app.clone();
+    blocking(app, move |state| {
+        handle
+            .state::<crate::browser::Bridge>()
+            .set_enabled(&handle, enabled)?;
+        let settings = crate::storage::Settings {
+            browser_integration: enabled,
+            ..state.storage.settings()
+        };
+        state.storage.save_settings(&settings)?;
+        Ok(browser_view(&handle))
+    })
+    .await
+}
+
+/// The user's answer to a browser asking to pair.
+#[tauri::command]
+pub(crate) fn answer_browser_pairing(app: AppHandle, allow: bool) {
+    app.state::<crate::browser::Bridge>().answer(allow);
+}
+
+/// Forgets one paired browser.
+#[tauri::command]
+pub(crate) fn forget_browser(app: AppHandle, id: String) -> Result<BrowserStatus, AppError> {
+    app.state::<crate::browser::Bridge>().forget(&id)?;
+    Ok(browser_view(&app))
 }

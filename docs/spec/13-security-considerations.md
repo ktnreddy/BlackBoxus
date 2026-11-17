@@ -104,6 +104,10 @@ A removed member may already have downloaded the vault, and keeps whatever they 
 
 A malicious or failing server can delete everything it stores. Clients SHOULD keep a local copy of the encrypted vault and offer encrypted exports.
 
+### 13.6.12 Browser extension
+
+The extension can fill any login the user saved for a site into that site's pages, so a page that is compromised, or a subdomain controlled by someone else, can receive it once the user clicks Fill. Section 14.7 covers this and the other limits of the browser bridge.
+
 ## 13.7 Issues found in this review
 
 Reviewing the sections together found these problems, which are fixed in this version of the specification:

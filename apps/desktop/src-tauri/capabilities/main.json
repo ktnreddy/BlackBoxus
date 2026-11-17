@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "What the main window may do: only BlackBoxus's own commands, nothing from Tauri's built-in plugins.",
+  "description": "What the main window may do: only BlackBoxus's own commands, and listening for the app's own events, nothing else from Tauri's built-in plugins.",
   "windows": [
     "main"
   ],
@@ -46,6 +46,12 @@
     "allow-remove-recovery-key",
     "allow-recover-account",
     "allow-create-vault",
-    "allow-rename-vault"
+    "allow-rename-vault",
+    "allow-browser-status",
+    "allow-set-browser-integration",
+    "allow-answer-browser-pairing",
+    "allow-forget-browser",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
   ]
 }

@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { appStatus, errorMessage, type AppStatus, type EmergencyKit as Kit } from "./lib/api";
+  import {
+    appStatus,
+    browserStatus,
+    errorMessage,
+    onBrowserPairing,
+    type AppStatus,
+    type EmergencyKit as Kit,
+    type PairingRequest,
+  } from "./lib/api";
+  import PairingDialog from "./lib/screens/PairingDialog.svelte";
   import EmergencyKit from "./lib/screens/EmergencyKit.svelte";
   import Recover from "./lib/screens/Recover.svelte";
   import SignIn from "./lib/screens/SignIn.svelte";
@@ -32,11 +41,28 @@
   /** Why the vaults were locked, shown on the unlock screen. */
   let lockNotice = $state("");
 
+  /** A browser asking to pair, shown over any screen. */
+  let pairingRequest = $state<PairingRequest | null>(null);
+  $effect(() => {
+    const stop = onBrowserPairing((r) => (pairingRequest = r));
+    browserStatus().then(
+      (b) => (pairingRequest = b.pending),
+      () => {},
+    );
+    return () => {
+      stop.then((f) => f(), () => {});
+    };
+  });
+
   appStatus().then(
     (s) => (status = s),
     (e: unknown) => (failure = errorMessage(e)),
   );
 </script>
+
+{#if pairingRequest}
+  <PairingDialog request={pairingRequest} />
+{/if}
 
 <div class="shell">
   {#if failure}
