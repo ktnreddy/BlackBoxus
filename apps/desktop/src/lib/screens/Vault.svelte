@@ -62,6 +62,13 @@
   /** The trusted contact has asked for access. */
   let emergencyRequest = $state<GrantView | null>(null);
   let trustedOpen = $state(false);
+  /** Warnings closed with their X. They come back at the next sync if
+   *  still true, and a new emergency request always shows. */
+  let dismissed = $state<{ unknownKeys: boolean; request: number | null; syncError: boolean }>({
+    unknownKeys: false,
+    request: null,
+    syncError: false,
+  });
   /** Another account opened as its trusted contact. */
   let viewing = $state<{ owner: string; vaults: VaultSummary[] } | null>(null);
   let denying = $state(false);
@@ -111,11 +118,13 @@
   async function sync() {
     syncing = true;
     syncError = "";
+    dismissed.syncError = false;
     try {
       const synced = await syncVaults();
       vaults = synced.vaults;
       offline = synced.offline;
       unknownKeys = synced.unknown_keys;
+      dismissed.unknownKeys = false;
       emergencyRequest = synced.emergency_request;
       if (!vaults.some((v) => v.id === vaultId)) vaultId = vaults[0]?.id ?? null;
       syncedAt = Date.now();
@@ -211,13 +220,17 @@
   ];
 </script>
 
-{#if unknownKeys}
-  <StatusBar icon="alert" tone="danger">
+{#if unknownKeys && !dismissed.unknownKeys}
+  <StatusBar icon="alert" tone="danger" ondismiss={() => (dismissed.unknownKeys = true)}>
     Warning: the public key log lists keys for your account that you didn't make. Someone may be
     posing as you to people who share with you. Don't share vaults until this is resolved.
   </StatusBar>
-{:else if emergencyRequest}
-  <StatusBar icon="alert" tone="danger">
+{:else if emergencyRequest && dismissed.request !== emergencyRequest.release_at_ms}
+  <StatusBar
+    icon="alert"
+    tone="danger"
+    ondismiss={() => (dismissed.request = emergencyRequest?.release_at_ms ?? null)}
+  >
     Your trusted contact asked to see your vaults. Access opens on
     {new Date(emergencyRequest.release_at_ms ?? 0).toLocaleString(undefined, {
       dateStyle: "medium",
@@ -227,17 +240,9 @@
       Deny
     </button>
   </StatusBar>
-{:else if syncing}
-  <StatusBar icon="refresh" tone="quiet">Syncing and checking your vaults…</StatusBar>
-{:else if offline}
-  <StatusBar icon="alert" tone="quiet">
-    Offline. Showing the copy on this computer, read-only. Use sync to try again.
-  </StatusBar>
-{:else if syncError}
-  <StatusBar icon="alert" tone="quiet">{syncError}</StatusBar>
-{:else}
-  <StatusBar icon="shield">
-    Verified and synced {syncedAt ? ago(syncedAt, now) : ""} · history checked
+{:else if syncError && !dismissed.syncError}
+  <StatusBar icon="alert" tone="danger" ondismiss={() => (dismissed.syncError = true)}>
+    {syncError}
   </StatusBar>
 {/if}
 
@@ -318,6 +323,22 @@
     >
       <span class="side-name"><Icon name="key" size={16} />Trusted contacts</span>
     </button>
+    <div
+      class="sync-line small"
+      class:warn={offline || !!syncError}
+      role="status"
+      title={syncError || undefined}
+    >
+      {#if syncing}
+        <Icon name="refresh" size={14} />Syncing and checking…
+      {:else if offline}
+        <Icon name="alert" size={14} />Offline · read-only copy
+      {:else if syncError}
+        <Icon name="alert" size={14} />Sync failed · try again
+      {:else}
+        <Icon name="shield" size={14} />Verified {syncedAt ? ago(syncedAt, now) : ""}
+      {/if}
+    </div>
     <div class="side-foot">
       <button type="button" class="btn ghost sm grow" onclick={lockNow}>
         <Icon name="lock" size={15} />Lock now
@@ -595,6 +616,19 @@
   }
   .spacer {
     margin: 12px 6px;
+  }
+  .sync-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 10px 10px;
+    color: var(--accent-soft);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sync-line.warn {
+    color: #ffb4a0;
   }
   .side-foot {
     margin-top: auto;

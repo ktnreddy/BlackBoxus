@@ -1,7 +1,6 @@
 <script lang="ts">
   import Icon from "../components/Icon.svelte";
   import PasswordField from "../components/PasswordField.svelte";
-  import StatusBar from "../components/StatusBar.svelte";
   import TopNav from "../components/TopNav.svelte";
   import { errorMessage, unlock, unlockWithHello, type AppStatus } from "../api";
 
@@ -56,10 +55,6 @@
     }
   }
 </script>
-
-<StatusBar icon="lock" tone="quiet">
-  Locked. Everything on this computer stays encrypted until you unlock.
-</StatusBar>
 
 <TopNav>
   <span class="small server"><Icon name="globe" size={16} />{status.server}</span>

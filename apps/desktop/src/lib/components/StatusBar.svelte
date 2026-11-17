@@ -6,7 +6,14 @@
     icon,
     tone = "accent",
     children,
-  }: { icon: IconName; tone?: "accent" | "quiet" | "danger"; children: Snippet } = $props();
+    ondismiss = undefined,
+  }: {
+    icon: IconName;
+    tone?: "accent" | "quiet" | "danger";
+    children: Snippet;
+    /** Shows a close button that hides the bar. */
+    ondismiss?: (() => void) | undefined;
+  } = $props();
 </script>
 
 <div
@@ -16,11 +23,17 @@
   role={tone === "danger" ? "alert" : "status"}
 >
   <Icon name={icon} size={15} />
-  {@render children()}
+  <span class="text">{@render children()}</span>
+  {#if ondismiss}
+    <button type="button" class="close" aria-label="Dismiss" onclick={ondismiss}>
+      <Icon name="x" size={15} />
+    </button>
+  {/if}
 </div>
 
 <style>
   .bar {
+    position: relative;
     height: 36px;
     flex: none;
     background: var(--accent);
@@ -40,6 +53,33 @@
     min-height: 36px;
     padding: 8px 24px;
     text-align: center;
+  }
+  .text {
+    display: inline;
+  }
+  .close {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    opacity: 0.75;
+    cursor: pointer;
+  }
+  .close:hover,
+  .close:focus-visible {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .danger {
+    padding-right: 52px;
   }
   .quiet {
     background: #1a120c;

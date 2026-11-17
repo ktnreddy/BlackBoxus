@@ -82,9 +82,14 @@ caught.
 - **Watching for keys in your name:** once a day, after a sync, the app
   checks the key transparency log for every key recorded under the
   account's ID (spec section 9.5). If any is not this account's own, a red
-  warning stays at the top of the window, checked again on every sync,
+  warning shows at the top of the window, checked again on every sync,
   because someone could be posing as the user to people who share with
   them. The time of the last check is kept in `vaults/self-check.json`.
+- **Status:** the sidebar shows when the vaults were last synced and
+  verified, or that the app is offline. Warnings (keys in your name, a
+  trusted contact's request, a failed sync) show in a red bar at the top
+  that can be closed with its X; it comes back at the next sync while the
+  problem lasts, and a new request always shows.
 - **Auto-lock:** after 10 minutes without keyboard or mouse input.
 - **Password generator:** random passwords (8 to 64 characters, letters
   that look alike left out) or passphrases of 3 to 10 words from the
