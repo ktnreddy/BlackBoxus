@@ -234,6 +234,8 @@ pub struct Vaults {
     files: VaultFiles,
     /// Someone looked up for sharing, kept until shared or replaced.
     pending: Option<(VaultId, VerifiedKeys)>,
+    /// Someone looked up to be the trusted contact.
+    pending_contact: Option<VerifiedKeys>,
 }
 
 fn role_name(role: Role) -> &'static str {
@@ -274,6 +276,7 @@ impl Vaults {
             order: Vec::new(),
             files,
             pending: None,
+            pending_contact: None,
         }
     }
 
@@ -561,6 +564,28 @@ impl Vaults {
         Ok(())
     }
 
+    /// Syncs the vaults the account can read, without changing anything:
+    /// no shares are accepted and no vault is created. For an account
+    /// opened by a trusted contact, whose session can only read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Tampered`] if any vault fails verification, or a
+    /// server or network error.
+    pub fn sync_existing(
+        &mut self,
+        transport: &impl Transport,
+        unlocked: &Unlocked,
+    ) -> Result<(), AppError> {
+        let ids = receive_list(&transport.send(&list_request(unlocked))?).map_err(vault_error)?;
+        for id in &ids {
+            self.sync_one(transport, unlocked, *id)?;
+        }
+        self.replicas.retain(|id, _| ids.contains(id));
+        self.order = ids;
+        Ok(())
+    }
+
     /// Syncs every vault the account can read. A new account gets its
     /// first vault here.
     ///
@@ -825,6 +850,59 @@ impl Vaults {
             sharing_id: sharing_id::encode(&them),
             safety_number: number,
         })
+    }
+
+    /// Looks someone up to be the trusted contact (spec section 11.4):
+    /// fetches their keys through key transparency and returns the safety
+    /// number to compare.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::InvalidSharingId`], [`AppError::SelfShare`], or
+    /// a server, network or verification error.
+    pub fn look_up_contact(
+        &mut self,
+        transport: &impl Transport,
+        unlocked: &Unlocked,
+        sharing_id: &str,
+    ) -> Result<LookedUp, AppError> {
+        let them = sharing_id::decode(sharing_id)?;
+        if them == *unlocked.session.account_id() {
+            return Err(AppError::SelfShare);
+        }
+        let (number, theirs) = self.safety_number(transport, unlocked, &them)?;
+        self.pending_contact = Some(theirs);
+        Ok(LookedUp {
+            sharing_id: sharing_id::encode(&them),
+            safety_number: number,
+        })
+    }
+
+    /// The keys of the person last looked up as a trusted contact.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NotVerified`] if that was someone else.
+    pub fn take_contact(&mut self, sharing_id: &str) -> Result<VerifiedKeys, AppError> {
+        let them = sharing_id::decode(sharing_id)?;
+        match self.pending_contact.take() {
+            Some(keys) if keys.bundle.account_id == them => Ok(keys),
+            _ => Err(AppError::NotVerified),
+        }
+    }
+
+    /// Any account's keys, verified through key transparency.
+    ///
+    /// # Errors
+    ///
+    /// Returns a server, network or verification error.
+    pub fn verified_keys(
+        &mut self,
+        transport: &impl Transport,
+        unlocked: &Unlocked,
+        account: &AccountId,
+    ) -> Result<VerifiedKeys, AppError> {
+        self.lookup(transport, unlocked, account)
     }
 
     /// Shares a vault with the person last looked up, once the user has

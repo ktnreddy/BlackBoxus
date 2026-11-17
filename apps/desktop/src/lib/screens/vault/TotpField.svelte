@@ -6,7 +6,14 @@
     item,
     index,
     code = $bindable(),
-  }: { vault: string; item: string; index: number; code?: string | undefined } = $props();
+    owner = undefined,
+  }: {
+    vault: string;
+    item: string;
+    index: number;
+    code?: string | undefined;
+    owner?: string | undefined;
+  } = $props();
 
   let current = $state<TotpCode | null>(null);
   let error = $state("");
@@ -17,7 +24,7 @@
     const [v, i, n] = [vault, item, index];
     let stopped = false;
     const tick = () =>
-      totpCode(v, i, n).then(
+      totpCode(v, i, n, owner).then(
         (c) => {
           if (stopped) return;
           current = c;

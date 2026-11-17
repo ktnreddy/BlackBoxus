@@ -253,6 +253,8 @@ pub(crate) struct Synced {
     /// The key log records keys for this account that it did not publish
     /// (spec section 9.5).
     unknown_keys: bool,
+    /// The trusted contact has asked for access (spec section 11.5).
+    emergency_request: Option<crate::trusted::GrantView>,
 }
 
 /// Syncs every vault with the server and lists them. Without a connection,
@@ -283,14 +285,47 @@ pub(crate) async fn sync_vaults(app: AppHandle) -> Result<Synced, AppError> {
                     other => other?,
                 }
             };
+            // A pending request from the trusted contact is shown on every
+            // sync, so the owner can deny it in time (spec section 11.6).
+            let emergency_request = if offline {
+                None
+            } else {
+                match crate::trusted::emergency_status(&state.transport, &s.unlocked) {
+                    Ok(status) => crate::trusted::EmergencyView::from(&status)
+                        .contact
+                        .filter(|c| c.stage == "requested"),
+                    Err(AppError::Offline) => None,
+                    Err(e) => return Err(e),
+                }
+            };
             Ok(Synced {
                 vaults: s.vaults.summaries(&s.unlocked),
                 offline,
                 unknown_keys,
+                emergency_request,
             })
         })
     })
     .await
+}
+
+/// The vaults to read: the account's own, or with `owner`, those of the
+/// account opened as its trusted contact.
+fn vaults_of<'a>(
+    s: &'a mut crate::state::Session,
+    owner: Option<&str>,
+) -> Result<&'a mut crate::vaults::Vaults, AppError> {
+    match owner {
+        None => Ok(&mut s.vaults),
+        Some(owner) => {
+            let owner = crate::sharing_id::decode(owner)?;
+            s.emergency
+                .as_mut()
+                .filter(|e| e.owner == owner)
+                .map(|e| &mut e.vaults)
+                .ok_or(AppError::EmergencyUnavailable)
+        }
+    }
 }
 
 /// Lists a vault's items, sorted by title. Carries no secrets.
@@ -298,11 +333,11 @@ pub(crate) async fn sync_vaults(app: AppHandle) -> Result<Synced, AppError> {
 pub(crate) fn list_items(
     state: State<'_, AppState>,
     vault: String,
+    owner: Option<String>,
 ) -> Result<Vec<ItemSummary>, AppError> {
     let id = vault_id(&vault)?;
     state.with_session(|s| {
-        let mut list: Vec<ItemSummary> = s
-            .vaults
+        let mut list: Vec<ItemSummary> = vaults_of(s, owner.as_deref())?
             .items(&id)?
             .iter()
             .map(|(item_id, item)| items::summary(item_id, item))
@@ -318,9 +353,15 @@ pub(crate) fn get_item(
     state: State<'_, AppState>,
     vault: String,
     item: String,
+    owner: Option<String>,
 ) -> Result<ItemView, AppError> {
     let (id, item_id) = (vault_id(&vault)?, item_id(&item)?);
-    state.with_session(|s| Ok(items::view(&item_id, &s.vaults.item(&id, &item_id)?)))
+    state.with_session(|s| {
+        Ok(items::view(
+            &item_id,
+            &vaults_of(s, owner.as_deref())?.item(&id, &item_id)?,
+        ))
+    })
 }
 
 /// The value of one concealed field, when the user asks to see it.
@@ -330,10 +371,11 @@ pub(crate) fn reveal_field(
     vault: String,
     item: String,
     index: usize,
+    owner: Option<String>,
 ) -> Result<Zeroizing<String>, AppError> {
     let (id, item_id) = (vault_id(&vault)?, item_id(&item)?);
     state.with_session(|s| {
-        let item = s.vaults.item(&id, &item_id)?;
+        let item = vaults_of(s, owner.as_deref())?.item(&id, &item_id)?;
         Ok(items::field_at(&item, index)?.value.clone())
     })
 }
@@ -346,10 +388,11 @@ pub(crate) fn copy_field(
     vault: String,
     item: String,
     index: usize,
+    owner: Option<String>,
 ) -> Result<(), AppError> {
     let (id, item_id) = (vault_id(&vault)?, item_id(&item)?);
     let value = state.with_session(|s| {
-        let item = s.vaults.item(&id, &item_id)?;
+        let item = vaults_of(s, owner.as_deref())?.item(&id, &item_id)?;
         Ok(items::field_at(&item, index)?.value.clone())
     })?;
     state.clipboard.copy(value)
@@ -620,10 +663,11 @@ pub(crate) fn totp_code(
     vault: String,
     item: String,
     index: usize,
+    owner: Option<String>,
 ) -> Result<crate::totp::Code, AppError> {
     let (id, item_id) = (vault_id(&vault)?, item_id(&item)?);
     let totp = state.with_session(|s| {
-        let item = s.vaults.item(&id, &item_id)?;
+        let item = vaults_of(s, owner.as_deref())?.item(&id, &item_id)?;
         crate::totp::Totp::parse(&items::field_at(&item, index)?.value)
     })?;
     totp.code_at(now_ms() / 1000)
@@ -880,6 +924,182 @@ pub(crate) async fn change_password(
             s.unlocked = unlocked;
             Ok(())
         })
+    })
+    .await
+}
+
+/// Trusted contacts: the one this account named, and people who named it.
+#[tauri::command]
+pub(crate) async fn emergency_status(
+    app: AppHandle,
+) -> Result<crate::trusted::EmergencyView, AppError> {
+    blocking(app, move |state| {
+        state.require_online()?;
+        state.with_session(|s| {
+            let status = crate::trusted::emergency_status(&state.transport, &s.unlocked)?;
+            Ok(crate::trusted::EmergencyView::from(&status))
+        })
+    })
+    .await
+}
+
+/// Looks someone up to be the trusted contact, for comparing the safety
+/// number.
+#[tauri::command]
+pub(crate) async fn look_up_contact(
+    app: AppHandle,
+    sharing_id: String,
+) -> Result<LookedUp, AppError> {
+    blocking(app, move |state| {
+        state.require_online()?;
+        state.with_session(|s| {
+            s.vaults
+                .look_up_contact(&state.transport, &s.unlocked, &sharing_id)
+        })
+    })
+    .await
+}
+
+/// Names the person just looked up as the trusted contact, after the
+/// master password is entered.
+#[tauri::command]
+pub(crate) async fn set_trusted_contact(
+    app: AppHandle,
+    sharing_id: String,
+    wait_days: u16,
+    password: Zeroizing<String>,
+) -> Result<crate::trusted::EmergencyView, AppError> {
+    blocking(app, move |state| {
+        state.require_online()?;
+        if password.is_empty() {
+            return Err(AppError::EmptyPassword);
+        }
+        if !(1..=90).contains(&wait_days) {
+            return Err(AppError::EmergencyUnavailable);
+        }
+        let record = state.account().ok_or(AppError::NoAccount)?;
+        let secret_key = state.storage.secret_key(&record)?;
+        let contact = state.with_session(|s| s.vaults.take_contact(&sharing_id))?;
+        flows::set_trusted_contact(
+            &state.transport,
+            &server()?,
+            &record.email,
+            &secret_key,
+            &password,
+            &account_id_of(&record)?,
+            &contact,
+            wait_days,
+        )?;
+        state.with_session(|s| {
+            let status = crate::trusted::emergency_status(&state.transport, &s.unlocked)?;
+            Ok(crate::trusted::EmergencyView::from(&status))
+        })
+    })
+    .await
+}
+
+/// Removes the trusted contact, ending any access they were given.
+#[tauri::command]
+pub(crate) async fn remove_trusted_contact(
+    app: AppHandle,
+) -> Result<crate::trusted::EmergencyView, AppError> {
+    blocking(app, move |state| {
+        state.require_online()?;
+        state.with_session(|s| {
+            crate::trusted::remove_contact(&state.transport, &s.unlocked)?;
+            let status = crate::trusted::emergency_status(&state.transport, &s.unlocked)?;
+            Ok(crate::trusted::EmergencyView::from(&status))
+        })
+    })
+    .await
+}
+
+/// Denies the trusted contact's pending request.
+#[tauri::command]
+pub(crate) async fn deny_emergency(
+    app: AppHandle,
+    sharing_id: String,
+) -> Result<crate::trusted::EmergencyView, AppError> {
+    blocking(app, move |state| {
+        state.require_online()?;
+        let contact = crate::sharing_id::decode(&sharing_id)?;
+        state.with_session(|s| {
+            crate::trusted::deny(&state.transport, &s.unlocked, &contact)?;
+            let status = crate::trusted::emergency_status(&state.transport, &s.unlocked)?;
+            Ok(crate::trusted::EmergencyView::from(&status))
+        })
+    })
+    .await
+}
+
+/// Asks for access to the account of someone who named this account as
+/// their trusted contact.
+#[tauri::command]
+pub(crate) async fn request_emergency(
+    app: AppHandle,
+    sharing_id: String,
+) -> Result<crate::trusted::EmergencyView, AppError> {
+    blocking(app, move |state| {
+        state.require_online()?;
+        let owner = crate::sharing_id::decode(&sharing_id)?;
+        state.with_session(|s| {
+            crate::trusted::request(&state.transport, &s.unlocked, &owner)?;
+            let status = crate::trusted::emergency_status(&state.transport, &s.unlocked)?;
+            Ok(crate::trusted::EmergencyView::from(&status))
+        })
+    })
+    .await
+}
+
+/// Opens, read-only, the account of someone who named this account as
+/// their trusted contact, once the waiting period is over. Returns their
+/// vaults.
+#[tauri::command]
+pub(crate) async fn open_emergency(
+    app: AppHandle,
+    sharing_id: String,
+) -> Result<Vec<VaultSummary>, AppError> {
+    blocking(app, move |state| {
+        state.require_online()?;
+        let owner = crate::sharing_id::decode(&sharing_id)?;
+        let dir = state.emergency_dir();
+        let log_key = crate::vaults::log_key()?;
+        state.with_session(|s| {
+            s.emergency = None;
+            let access = crate::trusted::open(
+                &state.transport,
+                &s.unlocked,
+                &mut s.vaults,
+                &owner,
+                &dir,
+                log_key,
+            )?;
+            let mut list = access.vaults.summaries(&access.unlocked);
+            for v in &mut list {
+                v.writable = false;
+            }
+            s.emergency = Some(access);
+            Ok(list)
+        })
+    })
+    .await
+}
+
+/// Closes an account opened as its trusted contact, ending the read-only
+/// session and deleting its vault copies from this computer.
+#[tauri::command]
+pub(crate) async fn close_emergency(app: AppHandle) -> Result<(), AppError> {
+    blocking(app, move |state| {
+        let closed = state.with_session(|s| Ok(s.emergency.take()))?;
+        if let Some(access) = closed {
+            // Best effort: the session expires within a day anyway.
+            let _ = crate::http::Transport::send(
+                &state.transport,
+                &access.unlocked.session.logout_request(),
+            );
+        }
+        state.remove_emergency_copies();
+        Ok(())
     })
     .await
 }

@@ -192,7 +192,7 @@ fn sharing_a_vault_after_checking_the_safety_number() -> Result<(), AppError> {
     assert!(
         shared
             .iter()
-            .any(|v| v.id == vault_text && v.name == "Shared with you" && !v.writable)
+            .any(|v| v.id == vault_text && v.name == "Personal" && !v.writable)
     );
     assert_eq!(b.item(&id, &item_id)?, item);
 
@@ -646,6 +646,94 @@ fn checking_our_own_keys_in_the_log() -> Result<(), AppError> {
     // Within a day it is not asked again; after a day it is.
     assert!(!vaults.check_own_keys(&transport, &unlocked, 2_000)?);
     assert!(!vaults.check_own_keys(&transport, &unlocked, 1_000 + 86_400_000)?);
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+#[ignore = "needs a running server and BLACKBOXUS_LOG_KEY"]
+fn naming_a_trusted_contact() -> Result<(), AppError> {
+    use blackboxus_desktop::flows::set_trusted_contact;
+    use blackboxus_desktop::http::Transport;
+    use blackboxus_desktop::vaults::{VaultFiles, Vaults, log_key};
+    use client_core::emergency::{
+        GrantStage, access_requested, deny_request, open_release, release_request, request_access,
+        status, status_request,
+    };
+
+    let transport = Https::new();
+    let server = ServerIdentity::new(ORIGIN)?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let owner_email = format!("owner-{nonce}@example.com");
+    let (owner, _, owner_secret, _) = create_account(&transport, &server, &owner_email, PASSWORD)?;
+    let (contact, _, _, _) = create_account(
+        &transport,
+        &server,
+        &format!("contact-{nonce}@example.com"),
+        PASSWORD,
+    )?;
+    let owner_id = *owner.session.account_id();
+    let contact_id = *contact.session.account_id();
+    let dir = std::env::temp_dir().join(format!("blackboxus-live-{nonce}"));
+    let mut vaults = Vaults::new(VaultFiles::new(dir.clone()), log_key()?);
+
+    let contact_text = blackboxus_desktop::sharing_id::encode(&contact_id);
+    vaults.look_up_contact(&transport, &owner, &contact_text)?;
+    let keys = vaults.take_contact(&contact_text)?;
+    assert_eq!(
+        set_trusted_contact(
+            &transport,
+            &server,
+            &owner_email,
+            &owner_secret,
+            "wrong-password",
+            &owner_id,
+            &keys,
+            1
+        )
+        .err(),
+        Some(AppError::WrongPassword)
+    );
+    set_trusted_contact(
+        &transport,
+        &server,
+        &owner_email,
+        &owner_secret,
+        PASSWORD,
+        &owner_id,
+        &keys,
+        1,
+    )?;
+    let mine = status(&owner_id, &transport.send(&status_request(&owner))?)?;
+    assert_eq!(mine.granted.as_ref().map(|g| g.contact), Some(contact_id));
+
+    // The contact asks; the owner sees it and denies it; they ask again.
+    let release_at = access_requested(&transport.send(&request_access(&contact, &owner_id))?)?;
+    let theirs = status(&contact_id, &transport.send(&status_request(&contact))?)?;
+    assert_eq!(theirs.received.len(), 1);
+    assert_eq!(
+        theirs.received[0].stage,
+        GrantStage::Requested {
+            requested_ms: release_at - 86_400_000,
+            release_at_ms: release_at
+        }
+    );
+    client_core::vaults::written(&transport.send(&deny_request(&owner, &contact_id))?)?;
+    access_requested(&transport.send(&request_access(&contact, &owner_id))?)?;
+
+    // A day has not passed, so nothing opens.
+    let owner_keys = vaults.verified_keys(&transport, &contact, &owner_id)?;
+    let early = transport.send(&release_request(&contact, &owner_id))?;
+    assert_eq!(
+        open_release(&contact, &owner_keys, &early).err(),
+        Some(client_core::ClientError::Server {
+            status: 403,
+            code: "too_early".into()
+        })
+    );
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
 }

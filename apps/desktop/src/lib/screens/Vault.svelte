@@ -3,6 +3,7 @@
   import Logo from "../components/Logo.svelte";
   import StatusBar from "../components/StatusBar.svelte";
   import {
+    denyEmergency,
     errorMessage,
     isAppError,
     listItems,
@@ -10,6 +11,7 @@
     syncVaults,
     type AppStatus,
     type EmergencyKit,
+    type GrantView,
     getSettings,
     type ItemSummary,
     type ItemView,
@@ -22,6 +24,8 @@
   import SettingsDialog from "./vault/SettingsDialog.svelte";
   import ShareVault from "./vault/ShareVault.svelte";
   import VaultNameDialog from "./vault/VaultNameDialog.svelte";
+  import TrustedContactsDialog from "./vault/TrustedContactsDialog.svelte";
+  import EmergencyViewer from "./vault/EmergencyViewer.svelte";
 
   let {
     status,
@@ -55,6 +59,26 @@
   let notice = $state("");
   /** The key log lists keys for this account that it did not publish. */
   let unknownKeys = $state(false);
+  /** The trusted contact has asked for access. */
+  let emergencyRequest = $state<GrantView | null>(null);
+  let trustedOpen = $state(false);
+  /** Another account opened as its trusted contact. */
+  let viewing = $state<{ owner: string; vaults: VaultSummary[] } | null>(null);
+  let denying = $state(false);
+
+  async function denyRequest() {
+    if (!emergencyRequest || denying) return;
+    denying = true;
+    try {
+      await denyEmergency(emergencyRequest.sharing_id);
+      emergencyRequest = null;
+      showNotice("Request denied.");
+    } catch (e) {
+      showNotice(errorMessage(e));
+    } finally {
+      denying = false;
+    }
+  }
   let sharing = $state(false);
   let generatorOpen = $state(false);
   let importOpen = $state(false);
@@ -92,6 +116,7 @@
       vaults = synced.vaults;
       offline = synced.offline;
       unknownKeys = synced.unknown_keys;
+      emergencyRequest = synced.emergency_request;
       if (!vaults.some((v) => v.id === vaultId)) vaultId = vaults[0]?.id ?? null;
       syncedAt = Date.now();
       await refreshItems();
@@ -191,6 +216,17 @@
     Warning: the public key log lists keys for your account that you didn't make. Someone may be
     posing as you to people who share with you. Don't share vaults until this is resolved.
   </StatusBar>
+{:else if emergencyRequest}
+  <StatusBar icon="alert" tone="danger">
+    Your trusted contact asked to see your vaults. Access opens on
+    {new Date(emergencyRequest.release_at_ms ?? 0).toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    })} unless you deny it.
+    <button type="button" class="btn ghost sm deny" disabled={denying} onclick={denyRequest}>
+      Deny
+    </button>
+  </StatusBar>
 {:else if syncing}
   <StatusBar icon="refresh" tone="quiet">Syncing and checking your vaults…</StatusBar>
 {:else if offline}
@@ -273,6 +309,14 @@
       onclick={() => (importOpen = true)}
     >
       <span class="side-name"><Icon name="upload" size={16} />Import passwords</span>
+    </button>
+    <button
+      type="button"
+      class="side-item plain"
+      disabled={offline}
+      onclick={() => (trustedOpen = true)}
+    >
+      <span class="side-name"><Icon name="key" size={16} />Trusted contacts</span>
     </button>
     <div class="side-foot">
       <button type="button" class="btn ghost sm grow" onclick={lockNow}>
@@ -439,11 +483,38 @@
   />
 {/if}
 
+{#if trustedOpen}
+  <TrustedContactsDialog
+    onclose={() => {
+      trustedOpen = false;
+      sync();
+    }}
+    onopen={(owner, list) => {
+      trustedOpen = false;
+      viewing = { owner, vaults: list };
+    }}
+    onnotice={showNotice}
+  />
+{/if}
+
+{#if viewing}
+  <EmergencyViewer
+    owner={viewing.owner}
+    vaults={viewing.vaults}
+    onclose={() => (viewing = null)}
+    onnotice={showNotice}
+  />
+{/if}
+
 {#if generatorOpen}
   <GeneratorDialog onclose={() => (generatorOpen = false)} onnotice={showNotice} />
 {/if}
 
 <style>
+  .deny {
+    margin-left: 12px;
+    padding: 2px 12px;
+  }
   .layout {
     flex: 1;
     min-height: 0;

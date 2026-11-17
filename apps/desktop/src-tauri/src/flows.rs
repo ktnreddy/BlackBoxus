@@ -225,3 +225,38 @@ pub fn change_password(
     let record = changing.complete(&transport.send(&request)?)?;
     Ok((fresh, record))
 }
+
+/// Names `contact` as the account's trusted contact (spec section 11.4),
+/// replacing any earlier one, after the master password is entered.
+/// `contact` must come from a key transparency lookup.
+///
+/// # Errors
+///
+/// Returns [`AppError::WrongPassword`], or a server or network failure.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the same sign-in inputs as the other fresh-session flows"
+)]
+pub fn set_trusted_contact(
+    transport: &impl Transport,
+    server: &ServerIdentity,
+    email: &str,
+    secret_key: &SecretKey,
+    password: &str,
+    account: &AccountId,
+    contact: &client_core::keys::VerifiedKeys,
+    wait_days: u16,
+) -> Result<(), AppError> {
+    with_fresh_session(
+        transport,
+        server,
+        email,
+        secret_key,
+        password,
+        account,
+        |u| {
+            let request = client_core::emergency::grant_request(u, contact, wait_days)?;
+            Ok(client_core::vaults::written(&transport.send(&request)?)?)
+        },
+    )
+}

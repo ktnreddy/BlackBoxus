@@ -19,7 +19,10 @@
     onedit,
     ondeleted,
     onnotice,
+    owner = undefined,
   }: {
+    /** Whose vaults these are, when opened as a trusted contact. */
+    owner?: string | undefined;
     vault: string;
     vaultName: string;
     itemId: string;
@@ -77,7 +80,7 @@
     error = "";
     revealed = {};
     confirmDelete = false;
-    getItem(v, id).then(
+    getItem(v, id, owner).then(
       (i) => (item = i),
       (e: unknown) => (error = errorMessage(e)),
     );
@@ -97,7 +100,7 @@
       return;
     }
     try {
-      const value = await revealField(vault, itemId, index);
+      const value = await revealField(vault, itemId, index, owner);
       revealed = { ...revealed, [index]: value };
       clearTimeout(timers.get(index));
       // Hide it again after 30 seconds, like the clipboard.
@@ -115,7 +118,7 @@
 
   async function copy(index: number, concealed: boolean) {
     try {
-      await copyField(vault, itemId, index);
+      await copyField(vault, itemId, index, owner);
       onnotice(concealed ? "Copied. The clipboard clears in 30 seconds." : "Copied.");
     } catch (e) {
       onnotice(errorMessage(e));
@@ -182,7 +185,7 @@
             <dt class="small">{label(f)}</dt>
             <dd>
               {#if f.kind === "totp"}
-                <TotpField {vault} item={itemId} index={i} bind:code={codes[i]} />
+                <TotpField {vault} {owner} item={itemId} index={i} bind:code={codes[i]} />
               {:else if f.concealed}
                 {#if i in revealed}
                   <span class="mono selectable">{revealed[i]}</span>

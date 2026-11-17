@@ -11,6 +11,8 @@
 //! - [`login`]: sign in and unlock the key set (spec sections 3.8 and 4).
 //! - [`keys`]: look up other accounts' keys through key transparency
 //!   (spec section 9).
+//! - [`emergency`]: name a trusted contact, and use a grant as one
+//!   (spec sections 11.4 and 11.5).
 //! - [`enrolment`]: add a device by QR code (spec section 10.3).
 //! - [`password`]: change the master password (spec section 3.9).
 //! - [`recovery`]: set up a recovery key, and recover an account with it
@@ -21,6 +23,7 @@
 mod error;
 mod http;
 
+pub mod emergency;
 pub mod enrolment;
 pub mod keys;
 pub mod login;

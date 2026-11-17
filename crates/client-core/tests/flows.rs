@@ -59,6 +59,8 @@ struct Server {
     recovery: HashMap<AccountId, RecoveryRecord>,
     /// Leaves a malicious server added for existing accounts.
     rogue_leaves: Vec<(AccountId, u64, Vec<u8>)>,
+    /// Emergency grants by owner, with the method-5 key set copy.
+    emergency: HashMap<AccountId, (server_core::recovery::StoredGrant, Vec<u8>)>,
 }
 
 /// An item's revision, envelope (none if deleted) and log sequence.
@@ -99,6 +101,7 @@ impl Server {
             vaults: Vaults::default(),
             recovery: HashMap::new(),
             rogue_leaves: Vec::new(),
+            emergency: HashMap::new(),
         }
     }
 
@@ -118,9 +121,17 @@ impl Server {
     fn session(&self, req: &Request) -> Result<Session, ApiError> {
         let token = http::bearer_token(req.authorization.as_deref())?;
         let hash = session_token_hash(&token)?;
-        Ok(self
+        let session = self
             .api
-            .authenticate(&token, self.sessions.get(&hash), self.now)?)
+            .authenticate(&token, self.sessions.get(&hash), self.now)?;
+        // As the Worker: an emergency session can only read.
+        if session.read_only
+            && (req.method.as_str() != "GET" || req.path.starts_with("/v1/emergency"))
+            && req.path != "/v1/logout"
+        {
+            return Err(ApiError::Core(server_core::Error::NotAllowed));
+        }
+        Ok(session)
     }
 
     fn by_email(&self, email: &ClientIdentity) -> Option<&AccountRecord> {
@@ -369,6 +380,103 @@ impl Server {
                 let head = self.api.sign_tree_head(&self.log, self.now)?;
                 let r = Api::own_leaves(&self.log, &own, seen, head)?;
                 json(&http::own_leaves_json(r))
+            }
+            Route::EmergencyPut => {
+                let s = self.session(req)?;
+                server_core::api::require_fresh_session(&s, self.now)?;
+                let r: http::EmergencyPutRequest = http::parse_json(body.as_bytes())?;
+                let account = self
+                    .accounts
+                    .iter()
+                    .find(|a| a.account_id == s.account_id)
+                    .unwrap();
+                let wrapped = http::unb64(&r.wrapped_key_set, 175)?;
+                let stored = server_core::recovery::accept_emergency(
+                    account,
+                    http::unb64(&r.grant, 4609)?,
+                    &wrapped,
+                )?;
+                self.emergency.insert(s.account_id, (stored, wrapped));
+                self.sessions
+                    .retain(|_, x| !(x.account_id == s.account_id && x.read_only));
+                Ok("{}".into())
+            }
+            Route::EmergencyDelete => {
+                let s = self.session(req)?;
+                self.emergency.remove(&s.account_id);
+                self.sessions
+                    .retain(|_, x| !(x.account_id == s.account_id && x.read_only));
+                Ok("{}".into())
+            }
+            Route::EmergencyStatus => {
+                let s = self.session(req)?;
+                let to_json = |owner: &AccountId, g: &server_core::recovery::StoredGrant| {
+                    use server_core::recovery::GrantState;
+                    let (state, requested_ms) = match g.state() {
+                        GrantState::Idle => ("idle", None),
+                        GrantState::Requested { at_ms } => ("requested", Some(at_ms)),
+                        GrantState::Released => ("released", None),
+                    };
+                    http::EmergencyGrantJson {
+                        owner_id: http::b64(owner.as_bytes()),
+                        contact_id: http::b64(g.header().contact.as_bytes()),
+                        wait_days: g.header().wait_days,
+                        state: state.into(),
+                        requested_ms,
+                        release_at_ms: g.release_at_ms(),
+                    }
+                };
+                let granted = self
+                    .emergency
+                    .get(&s.account_id)
+                    .map(|(g, _)| to_json(&s.account_id, g));
+                let received = self
+                    .emergency
+                    .iter()
+                    .filter(|(_, (g, _))| g.header().contact == s.account_id)
+                    .map(|(o, (g, _))| to_json(o, g))
+                    .collect();
+                json(&http::EmergencyStatusResponse { granted, received })
+            }
+            Route::EmergencyRequest(owner) => {
+                let s = self.session(req)?;
+                let (g, _) = self
+                    .emergency
+                    .get_mut(&owner)
+                    .ok_or(ApiError::Core(server_core::Error::NotAllowed))?;
+                g.request(&s.account_id, self.now)?;
+                json(&http::EmergencyRequestResponse {
+                    release_at_ms: g.release_at_ms().unwrap(),
+                })
+            }
+            Route::EmergencyDeny(contact) => {
+                let s = self.session(req)?;
+                let (g, _) = self
+                    .emergency
+                    .get_mut(&s.account_id)
+                    .ok_or(ApiError::Core(server_core::Error::NotAllowed))?;
+                if g.header().contact != contact {
+                    return Err(ApiError::Core(server_core::Error::NotAllowed));
+                }
+                g.deny(&s.account_id)?;
+                Ok("{}".into())
+            }
+            Route::EmergencyRelease(owner) => {
+                let s = self.session(req)?;
+                let now = self.now;
+                let (g, wrapped) = self
+                    .emergency
+                    .get_mut(&owner)
+                    .ok_or(ApiError::Core(server_core::Error::NotAllowed))?;
+                let grant = g.release(&s.account_id, now)?.to_vec();
+                let wrapped = wrapped.clone();
+                let (token, session) = server_core::api::emergency_session(&owner, now)?;
+                self.sessions.insert(session.token_hash, session);
+                json(&http::EmergencyReleaseResponse {
+                    grant: http::b64(&grant),
+                    wrapped_key_set: http::b64(&wrapped),
+                    session_token: http::b64(&token),
+                })
             }
             Route::EnrolmentPut(id) => {
                 self.session(req)?;
@@ -1573,6 +1681,114 @@ fn changing_the_master_password() {
     assert!(offline.unlock(PASSWORD, &alice.secret_key).is_err());
     let opened = offline.unlock(NEW_PASSWORD, &alice.secret_key).unwrap();
     assert_eq!(&opened.account_id, old.session.account_id());
+}
+
+#[test]
+fn a_trusted_contact_after_the_waiting_period() {
+    use client_core::emergency::{
+        GrantStage, access_requested, deny_request, grant_request, open_release, release_request,
+        remove_request, request_access, status, status_request,
+    };
+
+    let mut server = Server::new();
+    let alice = sign_up(&mut server, "alice@example.com");
+    let bob = sign_up(&mut server, "bob@example.com");
+    let alice_in = sign_in(
+        &mut server,
+        "alice@example.com",
+        PASSWORD,
+        &alice.secret_key,
+    )
+    .unwrap();
+    let bob_in = sign_in(&mut server, "bob@example.com", PASSWORD, &bob.secret_key).unwrap();
+    let vault = new_vault(&mut server, &alice_in);
+    let req = vault
+        .put_item(&alice_in, None, &login_item("bank", "s3cret"), 2)
+        .unwrap()
+        .1;
+    written(&server.send(&req)).unwrap();
+
+    // Alice names Bob, after checking his keys, with a two-day wait.
+    let bob_keys = lookup(&mut server, &alice_in, &bob.account_id);
+    assert!(grant_request(&alice_in, &bob_keys, 91).is_err());
+    let own = lookup(&mut server, &alice_in, &alice.account_id);
+    assert!(grant_request(&alice_in, &own, 2).is_err());
+    written(&server.send(&grant_request(&alice_in, &bob_keys, 2).unwrap())).unwrap();
+    let mine = status(&alice.account_id, &server.send(&status_request(&alice_in))).unwrap();
+    let granted = mine.granted.unwrap();
+    assert_eq!(granted.contact, bob.account_id);
+    assert_eq!(granted.stage, GrantStage::Idle);
+
+    // Nothing can be fetched before a request, or by anyone else.
+    assert_eq!(
+        server
+            .send(&release_request(&bob_in, &alice.account_id))
+            .status,
+        403
+    );
+    assert_eq!(
+        server
+            .send(&request_access(&alice_in, &alice.account_id))
+            .status,
+        403
+    );
+
+    // Bob asks; Alice sees it and denies it.
+    let release_at =
+        access_requested(&server.send(&request_access(&bob_in, &alice.account_id))).unwrap();
+    assert_eq!(release_at, server.now + 2 * 86_400_000);
+    let seen = status(&alice.account_id, &server.send(&status_request(&alice_in))).unwrap();
+    assert!(matches!(
+        seen.granted.unwrap().stage,
+        GrantStage::Requested { .. }
+    ));
+    let theirs = status(&bob.account_id, &server.send(&status_request(&bob_in))).unwrap();
+    assert_eq!(theirs.received.len(), 1);
+    assert_eq!(theirs.received[0].owner, alice.account_id);
+    written(&server.send(&deny_request(&alice_in, &bob.account_id))).unwrap();
+
+    // He asks again and Alice doesn't answer. Too early, then released.
+    access_requested(&server.send(&request_access(&bob_in, &alice.account_id))).unwrap();
+    let alice_keys = lookup(&mut server, &bob_in, &alice.account_id);
+    let early = server.send(&release_request(&bob_in, &alice.account_id));
+    assert_eq!(
+        open_release(&bob_in, &alice_keys, &early).unwrap_err(),
+        ClientError::Server {
+            status: 403,
+            code: "too_early".into()
+        }
+    );
+    server.now += 2 * 86_400_000;
+    let response = server.send(&release_request(&bob_in, &alice.account_id));
+    // Only Bob's keys open it, checked against Alice's real keys.
+    assert!(open_release(&alice_in, &alice_keys, &response).is_err());
+    assert!(open_release(&bob_in, &bob_keys, &response).is_err());
+    let as_alice = open_release(&bob_in, &alice_keys, &response).unwrap();
+    assert_eq!(as_alice.session.account_id(), &alice.account_id);
+
+    // With it Bob's app reads Alice's vault, but cannot change anything.
+    let mut copy = VaultReplica::new(*vault.vault_id());
+    sync(&mut server, &mut copy, &as_alice).unwrap();
+    assert_eq!(titles(&copy), ["bank"]);
+    let req = copy
+        .put_item(&as_alice, None, &login_item("evil", "x"), 3)
+        .unwrap()
+        .1;
+    assert_eq!(server.send(&req).status, 403);
+    assert_eq!(server.send(&status_request(&as_alice)).status, 403);
+
+    // When Alice removes him, the emergency session ends.
+    written(&server.send(&remove_request(&alice_in))).unwrap();
+    assert_eq!(
+        sync(&mut server, &mut copy, &as_alice).unwrap_err(),
+        ClientError::SignedOut
+    );
+    assert!(
+        status(&bob.account_id, &server.send(&status_request(&bob_in)))
+            .unwrap()
+            .received
+            .is_empty()
+    );
 }
 
 #[test]

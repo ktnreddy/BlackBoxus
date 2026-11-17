@@ -11,15 +11,15 @@ use serde::de::DeserializeOwned;
 use server_core::Error as CoreError;
 use server_core::api::{
     AccountRecord, Api, EnrolmentTransfer, LOGIN_ID_LEN, MAX_ENROLMENT_BYTES, NewAccount,
-    PendingLogin, SESSION_IDLE_MS, SESSION_MAX_MS, Session, accept_enrolment,
+    PendingLogin, SESSION_IDLE_MS, SESSION_MAX_MS, Session, accept_enrolment, emergency_session,
     require_fresh_session, session_token_hash, take_enrolment,
 };
 use server_core::log::MAX_ENTRY_BYTES;
 use server_core::login::OpaqueServer;
 use server_core::prelogin::FakeSaltKey;
 use server_core::recovery::{
-    NewPassword, RecoveryRecord, accept_recovery_key, change_password, recovery_finish,
-    recovery_start,
+    GrantState, NewPassword, RecoveryRecord, StoredGrant, accept_emergency, accept_recovery_key,
+    change_password, recovery_finish, recovery_start,
 };
 use server_core::transparency::KtLog;
 use server_core::vaults::{
@@ -27,6 +27,7 @@ use server_core::vaults::{
     accept_share, touched_item,
 };
 use vault_core::log::Checkpoint;
+use vault_core::recovery::EMERGENCY_GRANT_LEN;
 use vault_core::{
     AccountId, AccountSalt, ClientIdentity, IdentitySecretKey, KdfParams, MAX_ENVELOPE_LEN,
     OWNER_WRAPPED_VAULT_KEY_LEN, SIGNED_PUBLIC_BUNDLE_LEN, ServerIdentity, ShareInfo,
@@ -46,10 +47,11 @@ use crate::http::{
     Route, WrappedJson, b64, unb64, unb64_array,
 };
 use wire::{
-    ItemJson, ItemsResponse, LogAppendRequest, LogAppendResponse, LogResponse,
-    PasswordChangeRequest, RecoveryFinishRequest, RecoveryPutRequest, RecoveryStartRequest,
-    RecoveryStartResponse, SharePostRequest, SharesResponse, VaultKeyPutRequest, VaultKeysResponse,
-    VaultListResponse, VaultSummary,
+    EmergencyGrantJson, EmergencyPutRequest, EmergencyReleaseResponse, EmergencyRequestResponse,
+    EmergencyStatusResponse, ItemJson, ItemsResponse, LogAppendRequest, LogAppendResponse,
+    LogResponse, PasswordChangeRequest, RecoveryFinishRequest, RecoveryPutRequest,
+    RecoveryStartRequest, RecoveryStartResponse, SharePostRequest, SharesResponse,
+    VaultKeyPutRequest, VaultKeysResponse, VaultListResponse, VaultSummary,
 };
 
 /// Largest OPAQUE message or state accepted from a client or storage.
@@ -212,6 +214,29 @@ async fn handle(req: &mut Request, env: &Env, now: u64) -> Answer {
         Route::RecoveryFinish => recovery_finish_handler(req, &db, &ip, now).await,
         Route::Password => password_change(req, &db, api, now).await,
         Route::OwnLeaves => own_leaves(req, &db, api, now).await,
+        Route::EmergencyPut => emergency_put(req, &db, api, now).await,
+        Route::EmergencyDelete => {
+            let session = authenticate(req, &db, api, now).await?;
+            let me = text(&b64(session.account_id.as_bytes()));
+            let statements = vec![
+                stmt(
+                    &db,
+                    "DELETE FROM emergency WHERE owner_id = ?1",
+                    core::slice::from_ref(&me),
+                )?,
+                stmt(
+                    &db,
+                    "DELETE FROM sessions WHERE account_id = ?1 AND read_only = 1",
+                    core::slice::from_ref(&me),
+                )?,
+            ];
+            db.batch(statements).await.map_err(storage)?;
+            Ok("{}".into())
+        }
+        Route::EmergencyStatus => emergency_status(req, &db, api, now).await,
+        Route::EmergencyRequest(owner) => emergency_request(req, &db, api, &owner, now).await,
+        Route::EmergencyDeny(contact) => emergency_deny(req, &db, api, &contact, now).await,
+        Route::EmergencyRelease(owner) => emergency_release(req, &db, api, &owner, now).await,
         Route::NotImplemented => Err(ApiError::NotImplemented),
     }
 }
@@ -632,6 +657,203 @@ async fn password_change(req: &mut Request, db: &D1Database, api: &Api, now: u64
     ];
     db.batch(statements).await.map_err(storage)?;
     Ok("{}".into())
+}
+
+#[derive(Deserialize)]
+struct EmergencyRow {
+    owner_id: String,
+    contact_id: String,
+    grant_data: String,
+    wrapped_key_set: String,
+    state: u8,
+    requested_ms: Option<u64>,
+}
+
+impl EmergencyRow {
+    fn grant(&self) -> Result<StoredGrant, ApiError> {
+        Ok(StoredGrant::restore(
+            unb64(&self.grant_data, EMERGENCY_GRANT_LEN)?,
+            GrantState::from_stored(self.state, self.requested_ms)?,
+        )?)
+    }
+
+    fn json(&self) -> Result<EmergencyGrantJson, ApiError> {
+        let grant = self.grant()?;
+        let (state, requested_ms) = match grant.state() {
+            GrantState::Idle => ("idle", None),
+            GrantState::Requested { at_ms } => ("requested", Some(at_ms)),
+            GrantState::Released => ("released", None),
+        };
+        Ok(EmergencyGrantJson {
+            owner_id: self.owner_id.clone(),
+            contact_id: self.contact_id.clone(),
+            wait_days: grant.header().wait_days,
+            state: state.into(),
+            requested_ms,
+            release_at_ms: grant.release_at_ms(),
+        })
+    }
+}
+
+const EMERGENCY_COLUMNS: &str =
+    "owner_id, contact_id, grant_data, wrapped_key_set, state, requested_ms";
+
+async fn emergency_of(
+    db: &D1Database,
+    owner: &AccountId,
+) -> Result<Option<EmergencyRow>, ApiError> {
+    first(
+        db,
+        &format!("SELECT {EMERGENCY_COLUMNS} FROM emergency WHERE owner_id = ?1"),
+        &[text(&b64(owner.as_bytes()))],
+    )
+    .await
+}
+
+async fn emergency_put(req: &mut Request, db: &D1Database, api: &Api, now: u64) -> Answer {
+    let session = authenticate(req, db, api, now).await?;
+    require_fresh_session(&session, now)?;
+    let r: EmergencyPutRequest = body(req).await?;
+    let account = account_by_id(db, &session.account_id)
+        .await?
+        .ok_or(ApiError::Storage)?;
+    let wrapped = unb64(&r.wrapped_key_set, WRAPPED_KEY_SET_LEN)?;
+    let stored = accept_emergency(&account, unb64(&r.grant, EMERGENCY_GRANT_LEN)?, &wrapped)?;
+    let me = text(&b64(session.account_id.as_bytes()));
+    // A new grant replaces the old one, and ends any emergency session the
+    // old contact was given.
+    let statements = vec![
+        stmt(
+            db,
+            "INSERT INTO emergency (owner_id, contact_id, grant_data, wrapped_key_set, state, \
+             requested_ms) VALUES (?1, ?2, ?3, ?4, 0, NULL) ON CONFLICT (owner_id) DO UPDATE \
+             SET contact_id = excluded.contact_id, grant_data = excluded.grant_data, \
+             wrapped_key_set = excluded.wrapped_key_set, state = 0, requested_ms = NULL",
+            &[
+                me.clone(),
+                text(&b64(stored.header().contact.as_bytes())),
+                text(&b64(stored.bytes())),
+                text(&b64(&wrapped)),
+            ],
+        )?,
+        stmt(
+            db,
+            "DELETE FROM sessions WHERE account_id = ?1 AND read_only = 1",
+            core::slice::from_ref(&me),
+        )?,
+    ];
+    db.batch(statements).await.map_err(storage)?;
+    Ok("{}".into())
+}
+
+async fn emergency_status(req: &mut Request, db: &D1Database, api: &Api, now: u64) -> Answer {
+    let session = authenticate(req, db, api, now).await?;
+    let granted = emergency_of(db, &session.account_id)
+        .await?
+        .map(|r| r.json())
+        .transpose()?;
+    let rows: Vec<EmergencyRow> = all(
+        db,
+        &format!("SELECT {EMERGENCY_COLUMNS} FROM emergency WHERE contact_id = ?1 LIMIT 100"),
+        &[text(&b64(session.account_id.as_bytes()))],
+    )
+    .await?;
+    let received = rows
+        .iter()
+        .map(EmergencyRow::json)
+        .collect::<Result<_, _>>()?;
+    json(&EmergencyStatusResponse { granted, received })
+}
+
+async fn emergency_request(
+    req: &mut Request,
+    db: &D1Database,
+    api: &Api,
+    owner: &AccountId,
+    now: u64,
+) -> Answer {
+    let session = authenticate(req, db, api, now).await?;
+    let row = emergency_of(db, owner)
+        .await?
+        .ok_or(ApiError::Core(CoreError::NotAllowed))?;
+    let mut grant = row.grant()?;
+    grant.request(&session.account_id, now)?;
+    exec(
+        db,
+        "UPDATE emergency SET state = 1, requested_ms = ?2 WHERE owner_id = ?1 AND state = 0",
+        &[text(&b64(owner.as_bytes())), num(now)],
+    )
+    .await?;
+    json(&EmergencyRequestResponse {
+        release_at_ms: grant.release_at_ms().ok_or(ApiError::Storage)?,
+    })
+}
+
+async fn emergency_deny(
+    req: &mut Request,
+    db: &D1Database,
+    api: &Api,
+    contact: &AccountId,
+    now: u64,
+) -> Answer {
+    let session = authenticate(req, db, api, now).await?;
+    let row = emergency_of(db, &session.account_id)
+        .await?
+        .ok_or(ApiError::Core(CoreError::NotAllowed))?;
+    let mut grant = row.grant()?;
+    if grant.header().contact != *contact {
+        return Err(ApiError::Core(CoreError::NotAllowed));
+    }
+    grant.deny(&session.account_id)?;
+    exec(
+        db,
+        "UPDATE emergency SET state = 0, requested_ms = NULL WHERE owner_id = ?1 AND state = 1",
+        &[text(&b64(session.account_id.as_bytes()))],
+    )
+    .await?;
+    Ok("{}".into())
+}
+
+async fn emergency_release(
+    req: &mut Request,
+    db: &D1Database,
+    api: &Api,
+    owner: &AccountId,
+    now: u64,
+) -> Answer {
+    let session = authenticate(req, db, api, now).await?;
+    let row = emergency_of(db, owner)
+        .await?
+        .ok_or(ApiError::Core(CoreError::NotAllowed))?;
+    let mut grant = row.grant()?;
+    let grant_bytes = grant.release(&session.account_id, now)?.to_vec();
+    let (token, emergency) = emergency_session(owner, now)?;
+    let token = Zeroizing::new(token);
+    let owner_text = text(&b64(owner.as_bytes()));
+    let statements = vec![
+        stmt(
+            db,
+            "UPDATE emergency SET state = 2 WHERE owner_id = ?1",
+            core::slice::from_ref(&owner_text),
+        )?,
+        stmt(
+            db,
+            "INSERT INTO sessions (token_hash, account_id, created_ms, last_used_ms, read_only) \
+             VALUES (?1, ?2, ?3, ?4, 1)",
+            &[
+                text(&b64(&emergency.token_hash)),
+                owner_text.clone(),
+                num(emergency.created_ms),
+                num(emergency.last_used_ms),
+            ],
+        )?,
+    ];
+    db.batch(statements).await.map_err(storage)?;
+    json(&EmergencyReleaseResponse {
+        grant: b64(&grant_bytes),
+        wrapped_key_set: row.wrapped_key_set,
+        session_token: b64(token.as_slice()),
+    })
 }
 
 #[derive(Deserialize)]
@@ -1209,6 +1431,7 @@ struct SessionRow {
     account_id: String,
     created_ms: u64,
     last_used_ms: u64,
+    read_only: u8,
 }
 
 /// Checks the bearer token and applies the per-session rate limit.
@@ -1224,7 +1447,8 @@ async fn authenticate(
     let key = b64(&hash);
     let row: Option<SessionRow> = first(
         db,
-        "SELECT account_id, created_ms, last_used_ms FROM sessions WHERE token_hash = ?1",
+        "SELECT account_id, created_ms, last_used_ms, read_only FROM sessions \
+         WHERE token_hash = ?1",
         &[text(&key)],
     )
     .await?;
@@ -1235,6 +1459,7 @@ async fn authenticate(
                 account_id: AccountId::from_bytes(unb64_array(&r.account_id)?),
                 created_ms: r.created_ms,
                 last_used_ms: r.last_used_ms,
+                read_only: r.read_only != 0,
             })
         })
         .transpose()?;
@@ -1253,6 +1478,14 @@ async fn authenticate(
             return Err(e.into());
         }
     };
+    // An emergency session can only read the owner's vaults and keys.
+    if session.read_only {
+        let path = req.path();
+        let reading = req.method() == worker::Method::Get && !path.starts_with("/v1/emergency");
+        if !reading && path != "/v1/logout" {
+            return Err(ApiError::Core(CoreError::NotAllowed));
+        }
+    }
     limit(db, &http::PER_SESSION, &hash, now).await?;
     if stored.is_some_and(|s| now.saturating_sub(s.last_used_ms) >= SESSION_TOUCH_MS) {
         exec(

@@ -133,24 +133,37 @@ export function syncVaults(): Promise<{
   vaults: VaultSummary[];
   offline: boolean;
   unknown_keys: boolean;
+  emergency_request: GrantView | null;
 }> {
   return invoke("sync_vaults");
 }
 
-export function listItems(vault: string): Promise<ItemSummary[]> {
-  return invoke<ItemSummary[]>("list_items", { vault });
+// `owner` reads the vaults of an account opened as its trusted contact.
+
+export function listItems(vault: string, owner?: string): Promise<ItemSummary[]> {
+  return invoke<ItemSummary[]>("list_items", { vault, owner: owner ?? null });
 }
 
-export function getItem(vault: string, item: string): Promise<ItemView> {
-  return invoke<ItemView>("get_item", { vault, item });
+export function getItem(vault: string, item: string, owner?: string): Promise<ItemView> {
+  return invoke<ItemView>("get_item", { vault, item, owner: owner ?? null });
 }
 
-export function revealField(vault: string, item: string, index: number): Promise<string> {
-  return invoke<string>("reveal_field", { vault, item, index });
+export function revealField(
+  vault: string,
+  item: string,
+  index: number,
+  owner?: string,
+): Promise<string> {
+  return invoke<string>("reveal_field", { vault, item, index, owner: owner ?? null });
 }
 
-export function copyField(vault: string, item: string, index: number): Promise<void> {
-  return invoke<void>("copy_field", { vault, item, index });
+export function copyField(
+  vault: string,
+  item: string,
+  index: number,
+  owner?: string,
+): Promise<void> {
+  return invoke<void>("copy_field", { vault, item, index, owner: owner ?? null });
 }
 
 export function saveItem(vault: string, item: string | null, input: ItemInput): Promise<string> {
@@ -272,8 +285,13 @@ export interface TotpCode {
   remaining: number;
 }
 
-export function totpCode(vault: string, item: string, index: number): Promise<TotpCode> {
-  return invoke<TotpCode>("totp_code", { vault, item, index });
+export function totpCode(
+  vault: string,
+  item: string,
+  index: number,
+  owner?: string,
+): Promise<TotpCode> {
+  return invoke<TotpCode>("totp_code", { vault, item, index, owner: owner ?? null });
 }
 
 export interface Settings {
@@ -383,4 +401,57 @@ export function forgetBrowser(id: string): Promise<BrowserStatus> {
 /** Calls `f` whenever a browser asks to pair, or the request ends (null). */
 export function onBrowserPairing(f: (request: PairingRequest | null) => void): Promise<() => void> {
   return listen<PairingRequest | null>("browser-pairing", (e) => f(e.payload));
+}
+
+/** A trusted-contact grant, from either side (spec section 11.4). */
+export interface GrantView {
+  /** The other person's sharing ID. */
+  sharing_id: string;
+  wait_days: number;
+  stage: "idle" | "requested" | "released";
+  /** When access opens, if requested (Unix milliseconds). */
+  release_at_ms: number | null;
+}
+
+export interface EmergencyView {
+  /** The trusted contact this account named. */
+  contact: GrantView | null;
+  /** People who named this account as their trusted contact. */
+  received: GrantView[];
+}
+
+export function emergencyStatus(): Promise<EmergencyView> {
+  return invoke<EmergencyView>("emergency_status");
+}
+
+export function lookUpContact(sharingId: string): Promise<LookedUp> {
+  return invoke<LookedUp>("look_up_contact", { sharingId });
+}
+
+export function setTrustedContact(
+  sharingId: string,
+  waitDays: number,
+  password: string,
+): Promise<EmergencyView> {
+  return invoke<EmergencyView>("set_trusted_contact", { sharingId, waitDays, password });
+}
+
+export function removeTrustedContact(): Promise<EmergencyView> {
+  return invoke<EmergencyView>("remove_trusted_contact");
+}
+
+export function denyEmergency(sharingId: string): Promise<EmergencyView> {
+  return invoke<EmergencyView>("deny_emergency", { sharingId });
+}
+
+export function requestEmergency(sharingId: string): Promise<EmergencyView> {
+  return invoke<EmergencyView>("request_emergency", { sharingId });
+}
+
+export function openEmergency(sharingId: string): Promise<VaultSummary[]> {
+  return invoke<VaultSummary[]>("open_emergency", { sharingId });
+}
+
+export function closeEmergency(): Promise<void> {
+  return invoke<void>("close_emergency");
 }

@@ -23,6 +23,8 @@ pub struct Session {
     pub vaults: Vaults,
     /// A file chosen for import, until imported or cancelled.
     pub pending_import: Option<PendingImport>,
+    /// Another account opened as its trusted contact, read-only.
+    pub emergency: Option<crate::trusted::EmergencyAccess>,
 }
 
 /// The account set up on this computer, as shown in the window.
@@ -159,6 +161,7 @@ impl AppState {
             unlocked,
             vaults: Vaults::new(VaultFiles::new(self.storage.vault_dir()), log_key()?),
             pending_import: None,
+            emergency: None,
         })
     }
 
@@ -243,6 +246,20 @@ impl AppState {
         };
         drop(session);
         self.clipboard.clear_now();
+        self.remove_emergency_copies();
+    }
+
+    /// Where the vaults of an account opened as a trusted contact are kept
+    /// while open.
+    pub fn emergency_dir(&self) -> std::path::PathBuf {
+        self.storage.vault_dir().join("emergency")
+    }
+
+    /// Deletes the copies of another account's vaults opened as its
+    /// trusted contact. They are sealed with that account's keys, but
+    /// there is no reason to keep them once closed.
+    pub fn remove_emergency_copies(&self) {
+        let _ = std::fs::remove_dir_all(self.emergency_dir());
     }
 }
 

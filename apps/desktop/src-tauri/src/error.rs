@@ -109,6 +109,12 @@ pub enum AppError {
     /// Sharing with yourself.
     #[error("That's your own sharing ID.")]
     SelfShare,
+    /// Emergency access was asked for before the waiting period ended.
+    #[error("The waiting period isn't over yet.")]
+    TooEarly,
+    /// No emergency access in the state the request needs.
+    #[error("That emergency access isn't available. Check its status and try again.")]
+    EmergencyUnavailable,
     /// The import file could not be read.
     #[error("That file isn't a password export BlackBoxus can read. Export as CSV and try again.")]
     ImportUnreadable,
@@ -219,6 +225,8 @@ impl AppError {
             Self::NotVerified => "not_verified",
             Self::AlreadyMember => "already_member",
             Self::SelfShare => "self_share",
+            Self::TooEarly => "too_early",
+            Self::EmergencyUnavailable => "emergency_unavailable",
             Self::Busy => "busy",
             Self::Internal => "internal",
         }

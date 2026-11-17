@@ -83,7 +83,7 @@ Limits per email address apply equally to addresses without an account, so they 
 |---|---|---|
 | `POST /v1/logout` | → `{}` | Deletes this session. |
 | `GET /v1/keyset` | → `{account_id, key_set_version, wrapped: [{method, credential_id?, data}]}` | Only this account's wrapped copies, including the recovery copy (method 4) if there is one, so clients can show whether a recovery key is set. Device-key copies are never stored (10.4). |
-| `PUT /v1/keyset/wrapped` | `{method, credential_id?, data}` → `{}` | Method is 2 (passkey, with a credential ID of at most 1023 bytes), 4 or 5; header matches the current key set version and the method. |
+| `PUT /v1/keyset/wrapped` | `{method, credential_id?, data}` → `{}` | Method is 2 (passkey, with a credential ID of at most 1023 bytes); header matches the current key set version and the method. Methods 4 and 5 are stored by `PUT /v1/recovery` and `PUT /v1/emergency`. |
 | `DELETE /v1/keyset/wrapped` | `{method, credential_id?}` → `{}` | Deletes that copy. Method 1 cannot be deleted. |
 | `POST /v1/password` | `{upload, salt, kdf, wrapped_key_set}` → `{}` | Session less than 5 minutes old. As for `register/finish`; the wrapped key set uses method 1 and the current key set version. Ends all other sessions and pending logins (3.9). |
 | `GET /v1/accounts/{account_id}/keys?seen={tree_size}` | → `{signed_bundle, leaf, leaf_index, inclusion_proof, signed_tree_head, consistency_proof}` | `seen` is not larger than the log. Proofs are against the latest signed tree head, which the server signs on the first lookup after the log grows (9.4). |
@@ -99,10 +99,12 @@ Limits per email address apply equally to addresses without an account, so they 
 | `GET /v1/shares` | → `{shares: [...]}` | Shares addressed to this account. |
 | `PUT /v1/recovery` | `{verifier, wrapped_key_set}` → `{}` | Session less than 5 minutes old. Verifier is 32 bytes; the wrapped key set uses method 4 and the current key set version. Replaces any earlier recovery key (11.2). |
 | `DELETE /v1/recovery` | → `{}` | Session less than 5 minutes old. Deletes the recovery key. |
-| `PUT /v1/emergency` | `{grant}` → `{}` | Grant is 4609 bytes and its owner is this account (11.4). |
-| `POST /v1/emergency/{owner_id}/request` | → `{release_at}` | This account is the grant's contact and it is idle. Notifies the owner (11.5). |
-| `POST /v1/emergency/{contact_id}/deny` | → `{}` | This account is the grant's owner and a request is pending. |
-| `GET /v1/emergency/{owner_id}` | → `{grant}` | This account is the contact, and the waiting period has passed. |
+| `PUT /v1/emergency` | `{grant, wrapped_key_set}` → `{}` | Session less than 5 minutes old. Grant is 4609 bytes, its owner is this account, it is for the current key set version and names another account; the copy is method 5 for the current version (11.4). Replaces any earlier grant (one contact per account) and ends any emergency session it gave. |
+| `DELETE /v1/emergency` | → `{}` | Deletes this account's grant and ends any emergency session it gave. |
+| `GET /v1/emergency` | → `{granted, received: [...]}`, each `{owner_id, contact_id, wait_days, state, requested_ms, release_at_ms}` | The grant this account made, and grants naming it as the contact. Clients read it on every sync (11.6). |
+| `POST /v1/emergency/{owner_id}/request` | → `{release_at_ms}` | This account is the grant's contact and it is idle. |
+| `POST /v1/emergency/{contact_id}/deny` | → `{}` | This account is the grant's owner, `contact_id` is its contact, and a request is pending. |
+| `GET /v1/emergency/{owner_id}` | → `{grant, wrapped_key_set, session_token}` | This account is the contact, and the waiting period has passed (`too_early` before). Marks the grant released and issues a read-only session for the owner's account, valid for at most a day (11.5). |
 
 ## 12.8 Vault access
 
@@ -133,5 +135,5 @@ The server runs on Cloudflare Workers (Free plan) with one D1 database, and is s
 - **Key log size.** The log's subtree hashes are kept in one D1 row of about 85 bytes per account, which D1's 2 MB row limit caps at roughly 23,000 accounts. Before then, the tree must move to one row per level.
 - **Clean-up.** A daily scheduled job deletes expired logins, enrolment transfers, sessions and rate limit windows.
 
-This version serves the endpoints for accounts, login, sessions, key lookups and self-monitoring, device enrolment, vaults and sharing, recovery keys and password changes. The emergency access and extra unlock methods endpoints answer `not_implemented` until the clients that use them exist.
+This version serves the endpoints for accounts, login, sessions, key lookups and self-monitoring, device enrolment, vaults and sharing, recovery keys, password changes and trusted contacts. The extra unlock methods endpoints answer `not_implemented` until the clients that use them exist.
 

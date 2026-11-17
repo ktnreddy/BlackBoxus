@@ -17,11 +17,12 @@ pub mod http;
 mod import;
 mod importer;
 mod items;
-mod sharing_id;
+pub mod sharing_id;
 mod state;
 pub mod storage;
 mod strength;
 mod totp;
+mod trusted;
 pub mod vaults;
 
 use tauri::Manager;
@@ -109,6 +110,14 @@ pub fn run() -> Result<(), StartError> {
             commands::remove_recovery_key,
             commands::recover_account,
             commands::change_password,
+            commands::emergency_status,
+            commands::look_up_contact,
+            commands::set_trusted_contact,
+            commands::remove_trusted_contact,
+            commands::deny_emergency,
+            commands::request_emergency,
+            commands::open_emergency,
+            commands::close_emergency,
             commands::create_vault,
             commands::rename_vault,
             commands::browser_status,

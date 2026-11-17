@@ -164,6 +164,34 @@ pub enum GrantState {
     Released,
 }
 
+impl GrantState {
+    /// The state as stored: a code (0 idle, 1 requested, 2 released) and
+    /// the request time, if any.
+    #[must_use]
+    pub const fn to_stored(self) -> (u8, Option<u64>) {
+        match self {
+            Self::Idle => (0, None),
+            Self::Requested { at_ms } => (1, Some(at_ms)),
+            Self::Released => (2, None),
+        }
+    }
+
+    /// Reads a stored state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::MalformedMessage`] for an unknown code, or a
+    /// request without a time.
+    pub const fn from_stored(code: u8, requested_ms: Option<u64>) -> Result<Self> {
+        match (code, requested_ms) {
+            (0, _) => Ok(Self::Idle),
+            (1, Some(at_ms)) => Ok(Self::Requested { at_ms }),
+            (2, _) => Ok(Self::Released),
+            _ => Err(Error::MalformedMessage),
+        }
+    }
+}
+
 /// An emergency grant stored by the server, with its waiting-period state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredGrant {
@@ -191,6 +219,26 @@ impl StoredGrant {
             header,
             state: GrantState::Idle,
         })
+    }
+
+    /// A grant read back from storage, in the state it was stored in.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::MalformedMessage`] if the stored grant is not one.
+    pub fn restore(grant: Vec<u8>, state: GrantState) -> Result<Self> {
+        let header = EmergencyGrant::inspect(&grant)?;
+        Ok(Self {
+            grant,
+            header,
+            state,
+        })
+    }
+
+    /// The signed grant, as uploaded.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.grant
     }
 
     /// The grant's header.
@@ -263,6 +311,36 @@ impl StoredGrant {
         }
         Ok(&self.grant)
     }
+}
+
+/// `PUT /v1/emergency` (spec section 11.4): checks a grant from `owner` and
+/// the key set copy it unlocks. The adapter stores both, replacing any
+/// earlier grant, and ends any emergency session the old one gave.
+///
+/// # Errors
+///
+/// Returns [`Error::MalformedMessage`] if either is malformed, the grant is
+/// for another key set version, the copy is not method 5 for the current
+/// version, or the grant names the owner as their own contact;
+/// [`Error::NotAllowed`] if the grant's owner is another account.
+pub fn accept_emergency(
+    owner: &AccountRecord,
+    grant: Vec<u8>,
+    wrapped_key_set: &[u8],
+) -> Result<StoredGrant> {
+    let stored = StoredGrant::new(&owner.account_id, grant)?;
+    if stored.header.owner_key_set_version != owner.key_set_version
+        || stored.header.contact == owner.account_id
+        || stored.header.wait_days > vault_core::recovery::MAX_WAIT_DAYS
+    {
+        return Err(Error::MalformedMessage);
+    }
+    check_wrapped_copy(
+        wrapped_key_set,
+        owner.key_set_version,
+        UnlockMethod::TrustedContact,
+    )?;
+    Ok(stored)
 }
 
 #[cfg(test)]
@@ -556,5 +634,62 @@ mod tests {
         ] {
             assert_eq!(change_password(&record, &bad), Err(Error::MalformedMessage));
         }
+    }
+
+    #[test]
+    fn accepting_and_storing_an_emergency_grant() {
+        let keys = KeySet::generate().unwrap();
+        let (owner, _) = account(&RecoveryKey::generate().unwrap(), &keys);
+        let contact = KeySet::generate().unwrap();
+        let bundle =
+            PublicKeyBundle::verify_signed(&contact.signed_public_bundle(&CONTACT, 1).unwrap())
+                .unwrap();
+        let key = EmergencyKey::generate().unwrap();
+        let grant = EmergencyGrant::seal(&key, &keys, &OWNER, 1, &bundle, 7).unwrap();
+        let copy = keys
+            .wrap(key.wrapping_key(), &OWNER, 1, UnlockMethod::TrustedContact)
+            .unwrap();
+
+        let stored = accept_emergency(&owner, grant.clone(), &copy).unwrap();
+        assert_eq!(stored.header().contact, CONTACT);
+        assert_eq!(stored.state(), GrantState::Idle);
+        assert_eq!(stored.bytes(), grant.as_slice());
+
+        // The copy must be method 5 for the current version.
+        let recovery_copy = keys
+            .wrap(key.wrapping_key(), &OWNER, 1, UnlockMethod::Recovery)
+            .unwrap();
+        assert_eq!(
+            accept_emergency(&owner, grant.clone(), &recovery_copy).err(),
+            Some(Error::MalformedMessage)
+        );
+        // A grant for another key set version, or naming the owner as their
+        // own contact, is refused.
+        let old = EmergencyGrant::seal(&key, &keys, &OWNER, 2, &bundle, 7).unwrap();
+        assert_eq!(
+            accept_emergency(&owner, old, &copy).err(),
+            Some(Error::MalformedMessage)
+        );
+        let me =
+            PublicKeyBundle::verify_signed(&keys.signed_public_bundle(&OWNER, 1).unwrap()).unwrap();
+        let to_self = EmergencyGrant::seal(&key, &keys, &OWNER, 1, &me, 7).unwrap();
+        assert_eq!(
+            accept_emergency(&owner, to_self, &copy).err(),
+            Some(Error::MalformedMessage)
+        );
+
+        // Every state survives storage.
+        for state in [
+            GrantState::Idle,
+            GrantState::Requested { at_ms: 42 },
+            GrantState::Released,
+        ] {
+            let (code, at) = state.to_stored();
+            assert_eq!(GrantState::from_stored(code, at), Ok(state));
+            let restored = StoredGrant::restore(grant.clone(), state).unwrap();
+            assert_eq!(restored.state(), state);
+        }
+        assert!(GrantState::from_stored(1, None).is_err());
+        assert!(GrantState::from_stored(3, None).is_err());
     }
 }

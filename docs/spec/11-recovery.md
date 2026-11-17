@@ -83,13 +83,16 @@ The server holds each grant in one of three states:
 | Requested | The contact asked for access at time `t`. |
 | Released | The grant was handed to the contact. |
 
-- Only the grant's owner may upload it, and only its contact may request or receive it.
-- On a request, the server MUST notify the owner immediately and again before release.
+- Only the grant's owner may upload it, and only its contact may request or receive it. An account has at most one grant; uploading another replaces it.
+- The owner uploads the grant together with the key set wrapped under the grant's emergency key (method 5), from a session less than five minutes old.
+- On a request, the owner MUST be told: clients show a pending request on every sync, and the server SHOULD also notify the owner by email, immediately and again before release, once it can send email.
 - While a request is pending, the owner can **deny** it, returning the grant to idle.
 - The server releases the grant only when `now ≥ t + wait_days × 86400000` ms.
-- The owner can delete a grant at any time. A contact that already received the grant keeps access until the owner replaces their key set (Section 5.6), which every client SHOULD offer after a release.
+- The owner can delete a grant at any time.
 
-After a release, the server lets the contact download every vault the owner may read (Section 12.8). The contact can unlock the owner's key set, which includes the owner's identity signing key, so the contact can read the owner's vaults **and** make changes signed as the owner. Owners MUST be told this when they add a trusted contact. The contact cannot sign in as the owner, because login needs the owner's master password and Secret Key, and cannot change them; a later version may let the contact take over the account.
+On release the server hands the contact the grant, the method-5 copy and a new **emergency session** for the owner's account. The contact's client checks the grant against the owner's keys from key transparency (11.4), unwraps the key set, and checks it is the one the owner published. With the emergency session it reads the owner's vaults through the usual endpoints. The server MUST refuse every request from an emergency session except reads (`GET`) and `POST /v1/logout`, MUST also refuse it the `/v1/emergency` endpoints, and ends it after a day; the contact fetches a new one while the grant stays released. Deleting or replacing the grant ends every emergency session at once.
+
+Read-only is the server's rule, not a cryptographic limit: the key set includes the owner's identity signing key, so a contact who kept it could sign log entries as the owner if a server accepted them, and could open copies of the owner's vaults the server still holds. Owners MUST be told that a trusted contact can see everything they can, and SHOULD replace their key set (Section 5.6) after removing a contact who had access. The contact cannot sign in as the owner, because login needs the owner's master password and Secret Key, and cannot change them.
 
 ## 11.6 Security considerations
 

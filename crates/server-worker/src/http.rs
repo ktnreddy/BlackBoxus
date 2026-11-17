@@ -74,6 +74,18 @@ pub enum Route {
     Password,
     /// `GET /v1/accounts/self/leaves`
     OwnLeaves,
+    /// `PUT /v1/emergency`
+    EmergencyPut,
+    /// `DELETE /v1/emergency`
+    EmergencyDelete,
+    /// `GET /v1/emergency`
+    EmergencyStatus,
+    /// `POST /v1/emergency/{owner_id}/request`
+    EmergencyRequest(AccountId),
+    /// `POST /v1/emergency/{contact_id}/deny`
+    EmergencyDeny(AccountId),
+    /// `GET /v1/emergency/{owner_id}`
+    EmergencyRelease(AccountId),
     /// An endpoint of spec section 12 that this version does not serve yet.
     NotImplemented,
 }
@@ -82,7 +94,6 @@ pub enum Route {
 const PLANNED: &[(&str, &str)] = &[
     ("PUT", "/v1/keyset/wrapped"),
     ("DELETE", "/v1/keyset/wrapped"),
-    ("PUT", "/v1/emergency"),
 ];
 
 /// Finds the route for a method and path.
@@ -109,6 +120,9 @@ pub fn route(method: &str, path: &str) -> Result<Route, ApiError> {
         ("POST", "/v1/recovery/finish") => Some(Route::RecoveryFinish),
         ("POST", "/v1/password") => Some(Route::Password),
         ("GET", "/v1/accounts/self/leaves") => Some(Route::OwnLeaves),
+        ("PUT", "/v1/emergency") => Some(Route::EmergencyPut),
+        ("DELETE", "/v1/emergency") => Some(Route::EmergencyDelete),
+        ("GET", "/v1/emergency") => Some(Route::EmergencyStatus),
         _ => None,
     };
     if let Some(r) = fixed {
@@ -129,10 +143,15 @@ pub fn route(method: &str, path: &str) -> Result<Route, ApiError> {
         ("GET", ["", "v1", "vaults", id, "items"]) => Ok(Route::Items(vault(id)?)),
         ("PUT", ["", "v1", "vaults", id, "keys"]) => Ok(Route::VaultKeyPut(vault(id)?)),
         ("GET", ["", "v1", "vaults", id, "keys"]) => Ok(Route::VaultKeys(vault(id)?)),
-        (
-            "POST" | "GET",
-            ["", "v1", "emergency", _] | ["", "v1", "emergency", _, "request" | "deny"],
-        ) => Ok(Route::NotImplemented),
+        ("POST", ["", "v1", "emergency", id, "request"]) => {
+            Ok(Route::EmergencyRequest(AccountId::from_bytes(path_id(id)?)))
+        }
+        ("POST", ["", "v1", "emergency", id, "deny"]) => {
+            Ok(Route::EmergencyDeny(AccountId::from_bytes(path_id(id)?)))
+        }
+        ("GET", ["", "v1", "emergency", id]) => {
+            Ok(Route::EmergencyRelease(AccountId::from_bytes(path_id(id)?)))
+        }
         _ => Err(ApiError::NotFound),
     }
 }
@@ -454,6 +473,26 @@ mod tests {
             Ok(Route::RecoveryFinish)
         );
         assert_eq!(route("POST", "/v1/password"), Ok(Route::Password));
+        let owner = AccountId::from_bytes([1; 16]);
+        let owner_text = wire::b64(owner.as_bytes());
+        assert_eq!(route("PUT", "/v1/emergency"), Ok(Route::EmergencyPut));
+        assert_eq!(route("GET", "/v1/emergency"), Ok(Route::EmergencyStatus));
+        assert_eq!(
+            route("POST", &format!("/v1/emergency/{owner_text}/request")),
+            Ok(Route::EmergencyRequest(owner))
+        );
+        assert_eq!(
+            route("POST", &format!("/v1/emergency/{owner_text}/deny")),
+            Ok(Route::EmergencyDeny(owner))
+        );
+        assert_eq!(
+            route("GET", &format!("/v1/emergency/{owner_text}")),
+            Ok(Route::EmergencyRelease(owner))
+        );
+        assert_eq!(
+            route("GET", "/v1/emergency/not-an-id"),
+            Err(ApiError::NotFound)
+        );
         assert_eq!(
             route("GET", "/v1/accounts/self/leaves"),
             Ok(Route::OwnLeaves)

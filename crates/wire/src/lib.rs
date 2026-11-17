@@ -392,3 +392,57 @@ pub struct RecoveryFinishRequest {
     /// Key set wrapped with method 1 under the new master password.
     pub wrapped_key_set: String,
 }
+
+/// `PUT /v1/emergency`
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmergencyPutRequest {
+    /// The signed emergency grant (spec section 11.4).
+    pub grant: String,
+    /// Key set wrapped with method 5 under the grant's emergency key.
+    pub wrapped_key_set: String,
+}
+
+/// One emergency grant's waiting-period state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmergencyGrantJson {
+    /// The account that named a trusted contact.
+    pub owner_id: String,
+    /// The trusted contact.
+    pub contact_id: String,
+    /// Days between a request and the release.
+    pub wait_days: u16,
+    /// `idle`, `requested` or `released`.
+    pub state: String,
+    /// When access was requested (Unix milliseconds).
+    pub requested_ms: Option<u64>,
+    /// When the grant can be released (Unix milliseconds).
+    pub release_at_ms: Option<u64>,
+}
+
+/// Answer to `GET /v1/emergency`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EmergencyStatusResponse {
+    /// The grant this account made, if any.
+    pub granted: Option<EmergencyGrantJson>,
+    /// Grants naming this account as the trusted contact.
+    pub received: Vec<EmergencyGrantJson>,
+}
+
+/// Answer to `POST /v1/emergency/{owner_id}/request`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EmergencyRequestResponse {
+    /// When the grant can be released (Unix milliseconds).
+    pub release_at_ms: u64,
+}
+
+/// Answer to `GET /v1/emergency/{owner_id}` once released.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EmergencyReleaseResponse {
+    /// The signed emergency grant.
+    pub grant: String,
+    /// The owner's key set wrapped with method 5.
+    pub wrapped_key_set: String,
+    /// A read-only session for the owner's account, valid for a day.
+    pub session_token: String,
+}

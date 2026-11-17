@@ -138,6 +138,38 @@ Hello unlock off (it held the old session), and makes a new recovery key at
 once, because the old one has been typed here. The new Emergency Kit shows
 both.
 
+## Trusted contacts
+
+"Trusted contacts" in the sidebar lets an account name one person who can
+ask to see its vaults if something happens to the owner (spec sections
+11.4 and 11.5).
+
+- **Naming a contact:** their sharing ID is looked up through key
+  transparency and both people compare the safety number, as for sharing.
+  The owner picks a waiting period of 1, 3, 7, 14 or 30 days and enters the
+  master password, since the server takes a grant only from a session less
+  than five minutes old. The app signs the grant, encrypts a fresh
+  emergency key to the contact's keys, wraps the key set with that key, and
+  uploads both. The server can open neither.
+- **A request:** the contact asks from the same screen. On every sync the
+  owner's app shows a red bar with the date access opens and a Deny button,
+  until the request is denied or the wait is over.
+- **Opening:** after the wait the contact's app fetches the grant, checks
+  the owner's signature against keys from key transparency, unwraps the key
+  set and checks it is the one the owner published. The server also hands
+  over a read-only session for the owner's account, valid for a day, so the
+  app can sync their vaults with the usual checks. They open in a separate
+  read-only window; passwords can be revealed and copied but nothing can be
+  changed. Closing it ends the session and deletes the copies (kept under
+  `vaults/emergency/` while open, and also deleted on locking).
+- **Removing** the contact ends any access they were given. Anything they
+  already saw may be in their own notes, so important passwords should be
+  changed.
+
+Email notification of a request needs a mail service, which BlackBoxus
+does not have yet, so the owner learns of it the next time the app syncs.
+Choosing a longer waiting period covers people who open the app rarely.
+
 ## Windows Hello
 
 Settings → "Unlock with Windows Hello" lets the app unlock with a face,

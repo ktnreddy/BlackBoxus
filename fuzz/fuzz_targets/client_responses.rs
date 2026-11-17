@@ -69,6 +69,11 @@ fuzz_target!(|i: Input| {
         directory.check_own_keys(unlocked, own, &response).is_err(),
         "forged self-monitoring answer accepted"
     );
+    let _ = client_core::emergency::status(unlocked.session.account_id(), &response);
+    assert!(
+        client_core::emergency::open_release(unlocked, own, &response).is_err(),
+        "forged emergency grant opened"
+    );
     assert!(directory.tree_head().is_none());
 
     let offer = EnrolmentOffer::generate().expect("offer");

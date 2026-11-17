@@ -48,6 +48,9 @@ pub const MAX_ENROLMENT_BYTES: usize = 8192;
 /// Smallest enrolment transfer (nonce, tag and fixed fields), in bytes.
 pub const MIN_ENROLMENT_BYTES: usize = 96;
 
+/// Longest an emergency session lasts (spec section 11.5).
+pub const EMERGENCY_SESSION_MS: u64 = 86_400_000;
+
 /// Length of a login ID, in bytes.
 pub const LOGIN_ID_LEN: usize = 16;
 
@@ -118,6 +121,9 @@ pub struct Session {
     pub created_ms: u64,
     /// When the session was last used (Unix milliseconds).
     pub last_used_ms: u64,
+    /// An emergency session, given to a trusted contact (spec section
+    /// 11.5): it can only read, and lasts at most a day.
+    pub read_only: bool,
 }
 
 /// The server's answer to a key lookup (spec section 9.4).
@@ -353,6 +359,7 @@ impl Api {
             account_id,
             created_ms: now_ms,
             last_used_ms: now_ms,
+            read_only: false,
         })
     }
 
@@ -373,9 +380,14 @@ impl Api {
     ) -> Result<Session> {
         let hash = session_token_hash(presented)?;
         let session = session.ok_or(Error::Authentication)?;
+        let max = if session.read_only {
+            EMERGENCY_SESSION_MS
+        } else {
+            SESSION_MAX_MS
+        };
         if !bool::from(hash.ct_eq(&session.token_hash))
             || now_ms >= session.last_used_ms.saturating_add(SESSION_IDLE_MS)
-            || now_ms >= session.created_ms.saturating_add(SESSION_MAX_MS)
+            || now_ms >= session.created_ms.saturating_add(max)
         {
             return Err(Error::Authentication);
         }
@@ -562,6 +574,31 @@ pub fn check_wrapped_copy(
     Ok(())
 }
 
+/// A new emergency session for `owner`, handed to the trusted contact whose
+/// grant was released (spec section 11.5). Returns the token to send once
+/// and the session to store. Such a session can only read: the adapter
+/// MUST refuse every other request made with it.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidConfiguration`] if the generator fails.
+pub fn emergency_session(owner: &AccountId, now_ms: u64) -> Result<([u8; 32], Session)> {
+    let mut token = [0_u8; SESSION_TOKEN_LEN];
+    OsRng
+        .try_fill_bytes(&mut token)
+        .map_err(|_| Error::InvalidConfiguration)?;
+    Ok((
+        token,
+        Session {
+            token_hash: session_token_hash(&token)?,
+            account_id: *owner,
+            created_ms: now_ms,
+            last_used_ms: now_ms,
+            read_only: true,
+        },
+    ))
+}
+
 /// How recently a session must have been created for changes to how the
 /// account is unlocked (spec section 12.7).
 pub const FRESH_SESSION_MS: u64 = 300_000;
@@ -587,6 +624,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn emergency_sessions_are_read_only_and_short() {
+        let api = Api::new(
+            OpaqueServer::generate(),
+            FakeSaltKey::from_bytes(&[7; 32]).unwrap(),
+            IdentitySecretKey::generate().unwrap(),
+            ServerIdentity::new("https://api.blackboxus.test").unwrap(),
+        );
+        let owner = AccountId::from_bytes([1; 16]);
+        let (token, session) = emergency_session(&owner, 1000).unwrap();
+        let (other, _) = emergency_session(&owner, 1000).unwrap();
+        assert_ne!(token, other);
+        assert!(session.read_only);
+        assert_eq!(session.account_id, owner);
+        assert!(api.authenticate(&token, Some(&session), 2000).is_ok());
+        let mut used = session.clone();
+        used.last_used_ms = EMERGENCY_SESSION_MS;
+        assert_eq!(
+            api.authenticate(&token, Some(&used), 1000 + EMERGENCY_SESSION_MS),
+            Err(Error::Authentication)
+        );
+    }
+
+    #[test]
     fn session_expiry() {
         let api = Api::new(
             OpaqueServer::generate(),
@@ -600,6 +660,7 @@ mod tests {
             account_id: AccountId::from_bytes([1; 16]),
             created_ms: 0,
             last_used_ms: 0,
+            read_only: false,
         };
         let ok = api.authenticate(&token, Some(&session), 1000).unwrap();
         assert_eq!(ok.last_used_ms, 1000);
