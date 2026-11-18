@@ -38,7 +38,13 @@ the master password is not.
 - **Create an account:** the master password must have at least 12
   characters and score at least 3 out of 4 with
   [zxcvbn](https://github.com/shssoichiro/zxcvbn-rs), which also counts the
-  email address against it. Key derivation uses the default Argon2id
+  email address against it. It must also not appear in a known data
+  breach: the app sends only the first 5 characters of the password's
+  SHA-1 hash to [Have I Been Pwned](https://haveibeenpwned.com/Passwords)
+  and looks for a match in the answer itself (spec section 3.3). If that
+  check can't run, the other rules still apply. The same rules apply when
+  the master password is changed or reset with the recovery key. Key
+  derivation uses the default Argon2id
   settings (128 MiB, 4 passes). The app then signs in to the new account
   and shows the Emergency Kit, which can be printed or saved as a PDF.
 - **Sign in on this computer:** email address, Secret Key and master

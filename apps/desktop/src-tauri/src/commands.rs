@@ -9,6 +9,7 @@ use tauri::{AppHandle, Manager, State};
 use vault_core::{ClientIdentity, ItemId, SecretKey, ServerIdentity, VaultId};
 use zeroize::Zeroizing;
 
+use crate::breach;
 use crate::error::AppError;
 use crate::flows;
 use crate::generator::{self, Generated, Options};
@@ -68,8 +69,10 @@ pub(crate) fn rate_password(password: Zeroizing<String>, email: String) -> Ratin
     strength::rate(&password, &words)
 }
 
-/// Checks a new master password is typed the same twice and is long and
-/// strong enough.
+/// Checks a new master password is typed the same twice, is long and
+/// strong enough, and has not appeared in a known data breach. If the
+/// breach check can't run (offline, or the service is down), the password
+/// is still accepted: the length and strength rules above already applied.
 fn check_new_password(email: &str, password: &str, confirm: &str) -> Result<(), AppError> {
     if password != confirm {
         return Err(AppError::PasswordsDiffer);
@@ -81,6 +84,9 @@ fn check_new_password(email: &str, password: &str, confirm: &str) -> Result<(), 
     }
     if !rating.acceptable {
         return Err(AppError::WeakPassword);
+    }
+    if let breach::Outcome::Breached(_) = breach::check(password) {
+        return Err(AppError::BreachedPassword);
     }
     Ok(())
 }
@@ -912,10 +918,10 @@ pub(crate) async fn change_password(
             return Err(AppError::EmptyPassword);
         }
         let record = state.account().ok_or(AppError::NoAccount)?;
-        check_new_password(&record.email, &password, &confirm)?;
         if *password == *current {
             return Err(AppError::SamePassword);
         }
+        check_new_password(&record.email, &password, &confirm)?;
         let secret_key = state.storage.secret_key(&record)?;
         let (unlocked, offline) = flows::change_password(
             &state.transport,

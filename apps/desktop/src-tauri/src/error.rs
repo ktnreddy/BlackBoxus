@@ -27,6 +27,11 @@ pub enum AppError {
     /// A new master password is too easy to guess.
     #[error("Choose a stronger master password: longer, with words that don't belong together.")]
     WeakPassword,
+    /// A new master password appears in known data breaches.
+    #[error(
+        "That password has shown up in data breaches, so attackers already try it. Choose a different one."
+    )]
+    BreachedPassword,
     /// The two new passwords differ.
     #[error("The two passwords don't match.")]
     PasswordsDiffer,
@@ -185,6 +190,7 @@ impl AppError {
             Self::PasswordTooShort(_) => "password_too_short",
             Self::PasswordTooLong => "password_too_long",
             Self::WeakPassword => "weak_password",
+            Self::BreachedPassword => "breached_password",
             Self::PasswordsDiffer => "passwords_differ",
             Self::SamePassword => "same_password",
             Self::InvalidEmail => "invalid_email",

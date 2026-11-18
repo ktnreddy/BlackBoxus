@@ -5,6 +5,7 @@
 //! call the commands in `commands`, and the content security policy in
 //! `tauri.conf.json` stops it loading anything from the network.
 
+mod breach;
 pub mod browser;
 mod clipboard;
 mod commands;
