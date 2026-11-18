@@ -2,12 +2,15 @@
 //!
 //! The format is recognised from the header row, so files from Bitwarden,
 //! 1Password, Chrome, Edge, Firefox, Safari, LastPass, KeePass, KeePassXC,
-//! Dashlane, NordPass, Proton Pass and similar exports all work. Every value
-//! is held in memory that is wiped when dropped, and nothing from the file
-//! goes to the window except titles and counts.
+//! Dashlane, NordPass, Proton Pass and similar exports all work. Folders
+//! and tags are kept as labelled fields, and Bitwarden's custom fields as
+//! hidden fields. Every value is held in memory that is wiped when dropped,
+//! and nothing from the file goes to the window except titles and counts.
+
+use std::collections::BTreeSet;
 
 use serde::Serialize;
-use vault_core::{Field, FieldKind, Item, ItemType, MAX_VALUE_BYTES};
+use vault_core::{Field, FieldKind, Item, ItemType, MAX_LABEL_BYTES, MAX_VALUE_BYTES};
 use zeroize::Zeroizing;
 
 use crate::error::AppError;
@@ -32,6 +35,23 @@ const TOTP: &[&str] = &[
     "one-time password",
 ];
 const TYPE: &[&str] = &["type"];
+const FOLDER: &[&str] = &[
+    "folder",
+    "grouping",
+    "group",
+    "category",
+    "collection",
+    "vault",
+];
+const TAGS: &[&str] = &["tags", "tag", "labels"];
+/// Bitwarden's custom fields: one `name: value` per line.
+const CUSTOM: &[&str] = &["fields"];
+
+/// Folder names that mean "no folder".
+const NO_FOLDER: &[&str] = &["(none)", "root", "none", "unfiled"];
+
+/// Most custom fields kept from one row.
+const MAX_CUSTOM: usize = 50;
 
 /// What an import file holds, shown before anything is saved.
 #[derive(Debug, Clone, Serialize)]
@@ -44,6 +64,10 @@ pub struct Preview {
     pub notes: usize,
     /// Rows left out because they were empty or unreadable.
     pub skipped: usize,
+    /// Different folders found, kept as a "Folder" field on each item.
+    pub folders: usize,
+    /// Custom fields found, kept as hidden fields.
+    pub custom_fields: usize,
     /// The first few titles, so the user can check it is the right file.
     pub sample: Vec<String>,
 }
@@ -103,14 +127,36 @@ fn host(url: &str) -> Option<String> {
     (!host.is_empty()).then(|| host.to_owned())
 }
 
-fn value(record: &csv::StringRecord, index: Option<usize>) -> Option<Zeroizing<String>> {
-    let v = record.get(index?)?.trim();
-    // Values longer than an item allows are cut at a character boundary.
-    let mut end = v.len().min(MAX_VALUE_BYTES);
+/// Cuts `v` to at most `max` bytes, at a character boundary.
+fn cut(v: &str, max: usize) -> &str {
+    let mut end = v.len().min(max);
     while !v.is_char_boundary(end) {
         end = end.saturating_sub(1);
     }
-    let v = v.get(..end)?;
+    v.get(..end).unwrap_or_default()
+}
+
+/// Reads Bitwarden's custom fields, one `name: value` per line.
+fn custom_fields(text: &str) -> Vec<Field> {
+    text.lines()
+        .filter_map(|line| {
+            let (name, value) = line.split_once(": ").or_else(|| line.split_once(':'))?;
+            let (name, value) = (name.trim(), value.trim());
+            (!name.is_empty() && !value.is_empty()).then(|| {
+                Field::labelled(
+                    FieldKind::CustomConcealed,
+                    cut(name, MAX_LABEL_BYTES),
+                    cut(value, MAX_VALUE_BYTES),
+                )
+            })
+        })
+        .take(MAX_CUSTOM)
+        .collect()
+}
+
+fn value(record: &csv::StringRecord, index: Option<usize>) -> Option<Zeroizing<String>> {
+    // Values longer than an item allows are cut at a character boundary.
+    let v = cut(record.get(index?)?.trim(), MAX_VALUE_BYTES);
     (!v.is_empty()).then(|| Zeroizing::new(v.to_owned()))
 }
 
@@ -142,6 +188,9 @@ pub fn parse(bytes: &[u8], now_ms: u64) -> Result<Parsed, AppError> {
         col(TOTP),
         col(TYPE),
     );
+    let (folder, tags, custom) = (col(FOLDER), col(TAGS), col(CUSTOM));
+    let mut folders = BTreeSet::new();
+    let mut custom_count = 0_usize;
     if password.is_none() && notes.is_none() {
         return Err(AppError::ImportUnreadable);
     }
@@ -199,6 +248,16 @@ pub fn parse(bytes: &[u8], now_ms: u64) -> Result<Parsed, AppError> {
                 fields.push(Field::new(kind, &v));
             }
         }
+        let extra = get(custom).map(|c| custom_fields(&c)).unwrap_or_default();
+        custom_count = custom_count.saturating_add(extra.len());
+        fields.extend(extra);
+        if let Some(f) = get(folder).filter(|f| !NO_FOLDER.contains(&f.to_lowercase().as_str())) {
+            fields.push(Field::labelled(FieldKind::CustomText, "Folder", &f));
+            folders.insert(f.to_string());
+        }
+        if let Some(t) = get(tags) {
+            fields.push(Field::labelled(FieldKind::CustomText, "Tags", &t));
+        }
         items.push(Item {
             item_type: if is_note {
                 ItemType::SecureNote
@@ -229,6 +288,8 @@ pub fn parse(bytes: &[u8], now_ms: u64) -> Result<Parsed, AppError> {
             logins: items.len().saturating_sub(notes_count),
             notes: notes_count,
             skipped,
+            folders: folders.len(),
+            custom_fields: custom_count,
             sample,
         },
         items,
@@ -244,6 +305,53 @@ mod tests {
             .iter()
             .find(|f| f.kind == kind)
             .map(|f| f.value.as_str())
+    }
+
+    fn labelled<'a>(item: &'a Item, label: &str) -> Option<(&'a str, FieldKind)> {
+        item.fields
+            .iter()
+            .find(|f| f.label == label)
+            .map(|f| (f.value.as_str(), f.kind))
+    }
+
+    #[test]
+    fn folders_tags_and_custom_fields() -> Result<(), AppError> {
+        let csv = "folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp\n\
+                   Work,,login,VPN,,\"PIN: 4321\nRegion: eu-west\",0,https://vpn.example,alex,pw,\n\
+                   ,,login,Mail,,,0,https://mail.example,alex,pw2,\n\
+                   Work,,login,Wiki,,bad line,0,https://wiki.example,alex,pw3,\n";
+        let p = parse(csv.as_bytes(), 7)?;
+        assert_eq!((p.preview.folders, p.preview.custom_fields), (1, 2));
+        let vpn = p.items.first().ok_or(AppError::Internal)?;
+        assert_eq!(
+            labelled(vpn, "Folder"),
+            Some(("Work", FieldKind::CustomText))
+        );
+        assert_eq!(
+            labelled(vpn, "PIN"),
+            Some(("4321", FieldKind::CustomConcealed))
+        );
+        assert_eq!(
+            labelled(vpn, "Region"),
+            Some(("eu-west", FieldKind::CustomConcealed))
+        );
+        let mail = p.items.get(1).ok_or(AppError::Internal)?;
+        assert_eq!(labelled(mail, "Folder"), None);
+
+        let lastpass = "url,username,password,totp,extra,name,grouping,fav\n\
+                        https://a.example,u,p,,,A,(none),0\n\
+                        https://b.example,u,p,,,B,Shopping,0\n";
+        let p = parse(lastpass.as_bytes(), 1)?;
+        assert_eq!(p.preview.folders, 1);
+        let one = "Title,Url,Username,Password,OTPAuth,Favorite,Archived,Tags,Notes\n\
+                   Mail,https://mail.example,alex,pw,,false,false,\"home, email\",\n";
+        let p = parse(one.as_bytes(), 1)?;
+        let mail = p.items.first().ok_or(AppError::Internal)?;
+        assert_eq!(
+            labelled(mail, "Tags"),
+            Some(("home, email", FieldKind::CustomText))
+        );
+        Ok(())
     }
 
     #[test]

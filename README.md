@@ -37,7 +37,7 @@ All cryptography lives in one Rust library, `vault-core`, shared by every app. T
 | Crypto core | Rust (`vault-core`) | Every client |
 | Server | Rust on Cloudflare Workers, D1, Durable Objects | Cloudflare |
 | Website | Static site | Cloudflare Pages |
-| Desktop app | Tauri 2 + Svelte 5 + TypeScript | Windows first; macOS and Linux later |
+| Desktop app | Tauri 2 + Svelte 5 + TypeScript | Windows and Linux; macOS later |
 | Browser extension | TypeScript + WebAssembly | Firefox, Chrome |
 | Android app | Kotlin + Jetpack Compose | Android |
 | iOS app | Swift + SwiftUI | iPhone, iPad (planned) |

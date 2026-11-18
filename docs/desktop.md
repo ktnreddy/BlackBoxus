@@ -5,7 +5,8 @@ The desktop app lives in `apps/desktop`. It is built with
 (`src/`) shown in the system webview (WebView2 on Windows), and everything
 else runs in Rust (`src-tauri/`) on top of `client-core`.
 
-Windows is the first platform. macOS and Linux builds come later.
+Windows is the first platform. Linux packages (.deb and AppImage) are built
+too; macOS comes later.
 
 ## How it is split
 
@@ -19,7 +20,7 @@ Windows is the first platform. macOS and Linux builds come later.
 | What | Where | Protected by |
 | --- | --- | --- |
 | Email address, account ID, server | `account.json` in the app's data folder | Nothing secret in it |
-| Secret Key | Windows Credential Manager (`BlackBoxus` entry) | Windows encrypts it for the signed-in user |
+| Secret Key | Windows Credential Manager (`BlackBoxus` entry); on Linux the Secret Service (GNOME Keyring or KWallet) | Encrypted by the system for the signed-in user |
 | Master password | Nowhere | Typed each time you unlock |
 | Vault copies | `vaults/*.vault` in the app's data folder | Sealed with the account's key set |
 | Offline unlock record | `offline-unlock.json` | The key set wrapped for the master password, as the server keeps it |
@@ -227,7 +228,9 @@ KeePassXC, Dashlane, NordPass and Proton Pass exports all work.
 - Afterwards the app offers to delete the export file, which holds every
   password unencrypted.
 
-Folders, tags, custom fields and attachments are not imported yet.
+Folders and tags become labelled fields ("Folder", "Tags") on each item,
+so they show and can be searched, and Bitwarden's custom fields become
+hidden fields with their names. Attachments are not imported.
 
 ## Sharing
 
@@ -288,6 +291,12 @@ sent to the window when the user asks to see one.
 - **One instance only.** A second launch focuses the open window instead
   of running a second copy against the same local data.
 - **Drag and drop is off**, so files dropped on the window are ignored.
+- **Isolation pattern.** Tauri passes every message from the window
+  through a separate, sandboxed script (`apps/desktop/isolation`) before
+  encrypting it for the app with a key made at each start. The script
+  refuses any command not on its list, so even script injected into the
+  page can call nothing else. A test checks that its list matches the
+  commands in `build.rs`.
 - Developer tools exist only in debug builds.
 
 Server connections use rustls with Mozilla's root certificates, never
@@ -300,8 +309,8 @@ Known limits, to address later:
 - Strings typed into the page live in the webview's memory until it frees
   them; the page can clear its own copy but cannot wipe the browser
   engine's.
-- Tauri's isolation pattern (an extra check on every IPC message) is not
-  enabled yet; it becomes worth it once the page has more dependencies.
+- On Linux without a Secret Service, the Secret Key is kept in memory
+  only, so it must be entered with the master password at each start.
 
 ## Browser extension
 
@@ -369,8 +378,8 @@ npm run tauri dev
 cargo test -p blackboxus-desktop -- --ignored
 ```
 
-On Linux and macOS, debug builds keep the Secret Key in memory only, so it
-is gone when the app closes.
+Tests keep the Secret Key in memory only. On Linux, the app uses the
+desktop's Secret Service when there is one.
 
 On Linux, building also needs the WebKitGTK development libraries:
 `libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev`.
@@ -378,6 +387,8 @@ On Linux, building also needs the WebKitGTK development libraries:
 ## Installer
 
 Every push to `main` that touches the app or the crates it uses runs the
-**Desktop** workflow, which builds the Windows installer and attaches it to
-the run's page for 14 days. The installer installs for the current user
-only and fetches the WebView2 runtime if a computer lacks it.
+**Desktop** workflow, which builds the Windows installer and the Linux
+packages (.deb and AppImage) and attaches them to the run's page for 14
+days. The Windows installer installs for the current user only and fetches
+the WebView2 runtime if a computer lacks it. Windows Hello unlock is
+Windows only; everything else works the same on Linux.

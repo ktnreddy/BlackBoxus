@@ -156,6 +156,17 @@
                 {preview.skipped === 1 ? "row" : "rows"} left out{/if}</span
             >
           </div>
+          {#if preview.folders || preview.custom_fields}
+            <div>
+              <span class="small">Also kept</span>
+              <span
+                >{#if preview.folders}{preview.folders}
+                  {preview.folders === 1 ? "folder" : "folders"}, as a Folder field{/if}{#if preview.folders && preview.custom_fields};
+                {/if}{#if preview.custom_fields}{preview.custom_fields} custom
+                  {preview.custom_fields === 1 ? "field" : "fields"}, hidden{/if}</span
+              >
+            </div>
+          {/if}
         </div>
       </div>
       <div>

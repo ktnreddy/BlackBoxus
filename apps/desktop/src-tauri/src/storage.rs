@@ -85,12 +85,44 @@ pub fn init_secret_store() -> Result<(), AppError> {
     if keyring_core::get_default_store().is_some() {
         return Ok(());
     }
-    #[cfg(windows)]
-    let store = windows_native_keyring_store::Store::new().map_err(|_| AppError::Storage)?;
-    #[cfg(not(windows))]
-    let store = keyring_core::mock::Store::new().map_err(|_| AppError::Storage)?;
-    keyring_core::set_default_store(store);
+    keyring_core::set_default_store(platform_store()?);
     Ok(())
+}
+
+type Store = std::sync::Arc<keyring_core::CredentialStore>;
+
+/// A store that keeps entries in memory only, until the app closes.
+#[cfg(any(test, not(any(windows, target_os = "macos"))))]
+fn memory_store() -> Result<Store, AppError> {
+    Ok(keyring_core::mock::Store::new().map_err(|_| AppError::Storage)?)
+}
+
+/// The Windows Credential Manager.
+#[cfg(all(windows, not(test)))]
+fn platform_store() -> Result<Store, AppError> {
+    Ok(windows_native_keyring_store::Store::new().map_err(|_| AppError::Storage)?)
+}
+
+/// The macOS keychain.
+#[cfg(all(target_os = "macos", not(test)))]
+fn platform_store() -> Result<Store, AppError> {
+    Ok(apple_native_keyring_store::keychain::Store::new().map_err(|_| AppError::Storage)?)
+}
+
+/// The desktop's Secret Service (GNOME Keyring or KWallet). Without one,
+/// the Secret Key is kept in memory and must be entered at each start.
+#[cfg(all(target_os = "linux", not(test)))]
+fn platform_store() -> Result<Store, AppError> {
+    match zbus_secret_service_keyring_store::Store::new() {
+        Ok(store) => Ok(store),
+        Err(_) => memory_store(),
+    }
+}
+
+/// Tests, and other systems, keep entries in memory.
+#[cfg(any(test, not(any(windows, target_os = "macos", target_os = "linux"))))]
+fn platform_store() -> Result<Store, AppError> {
+    memory_store()
 }
 
 /// Where the app keeps its files.

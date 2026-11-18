@@ -50,12 +50,16 @@
         "frame-ancestors": "'none'"
       },
       "freezePrototype": true,
+      "pattern": {
+        "use": "isolation",
+        "options": { "dir": "../isolation" }
+      },
       "capabilities": ["main"]
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["nsis", "deb", "appimage"],
     "publisher": "ktnreddy",
     "copyright": "Copyright (C) 2026 ktnreddy. Licensed under the GNU AGPL v3 or later.",
     "license": "AGPL-3.0-or-later",
@@ -67,6 +71,11 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
+    "linux": {
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+      }
+    },
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper" },
       "nsis": { "installMode": "currentUser" }

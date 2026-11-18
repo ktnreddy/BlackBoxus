@@ -239,6 +239,10 @@ export interface ImportPreview {
   logins: number;
   notes: number;
   skipped: number;
+  /** Different folders, kept as a "Folder" field on each item. */
+  folders: number;
+  /** Custom fields, kept as hidden fields. */
+  custom_fields: number;
   sample: string[];
 }
 

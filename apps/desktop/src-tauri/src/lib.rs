@@ -128,3 +128,26 @@ pub fn run() -> Result<(), StartError> {
         ])
         .run(tauri::generate_context!())
 }
+
+#[cfg(test)]
+mod tests {
+    /// The isolation script must allow exactly the commands that exist.
+    #[test]
+    fn isolation_allows_exactly_the_commands() {
+        let quoted = |text: &str| -> std::collections::BTreeSet<String> {
+            text.lines()
+                .filter_map(|l| {
+                    l.trim()
+                        .strip_prefix('"')
+                        .and_then(|l| l.strip_suffix("\","))
+                        .map(str::to_owned)
+                })
+                .filter(|name| !name.contains('|'))
+                .collect()
+        };
+        let commands = quoted(include_str!("../build.rs"));
+        let allowed = quoted(include_str!("../../isolation/index.js"));
+        assert!(commands.len() > 40);
+        assert_eq!(commands, allowed);
+    }
+}
