@@ -80,7 +80,7 @@ tauri-plugin-barcode-scanner = "2.5.3"
 
 [target.'cfg(windows)'.dependencies]
 # Where each browser finds the native messaging host.
-windows-registry = "0.6.1"
+windows-registry = "0.100.0"
 # The access list of the named pipe to the native messaging host.
 widestring = "1.2"
 # The Windows Credential Manager, which encrypts entries for the signed-in
