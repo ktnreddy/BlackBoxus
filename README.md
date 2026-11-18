@@ -47,6 +47,8 @@ All cryptography lives in one Rust library, `vault-core`, shared by every app. T
 ```
 apps/
   desktop/       The desktop app: Svelte screens in src/, Rust in src-tauri/
+  extension/     The browser extension for Chrome, Edge, Brave and Firefox
+  website/       The website, plain HTML and CSS on Cloudflare Pages
 crates/
   vault-core/    All cryptography and the vault data model
   client-core/   Client flows shared by every app (sign-up, login, key lookups)

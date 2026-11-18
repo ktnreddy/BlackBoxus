@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How BlackBoxus keeps you safe · BlackBoxus</title>
+  <meta name="description" content="How BlackBoxus encrypts your vaults, what our server can and can't see, and how to report a vulnerability.">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<!-- header -->
+<main id="main">
+  <section class="page-head">
+    <div class="wrap">
+      <h1 class="page-title">How it keeps you <span class="hi">safe</span></h1>
+      <p class="lede">The short version: your devices do all the encrypting, our server stores what
+        it can't open, and your apps check everything it sends back. The full details are in the
+        protocol specification that ships with the source code.</p>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="wrap split">
+      <div>
+        <h2>Two secrets, one key</h2>
+        <p class="lede">Your vaults are locked by a key that only your devices can work out.</p>
+      </div>
+      <ol class="steps">
+        <li><span><strong>Your master password</strong> is never stored or sent. It is stretched
+          with Argon2id, which makes guessing slow even on powerful hardware.</span></li>
+        <li><span><strong>Your Secret Key</strong> is 128 random bits made on your first device and
+          kept in your Emergency Kit. Mixed with the password, it means a weak password alone can't
+          be guessed from our data.</span></li>
+        <li><span><strong>Signing in</strong> uses OPAQUE, so the server can check you know the
+          password without ever seeing it. Because sign-in also needs your Secret Key, nothing the
+          server stores can be used to guess your password.</span></li>
+        <li><span><strong>Every item</strong> is encrypted with XChaCha20-Poly1305 under its vault's
+          key, which is shared only with people you add.</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="wrap">
+      <h2>What our server can and can't see</h2>
+      <table class="table">
+        <thead>
+          <tr><th scope="col">Data</th><th scope="col">What the server holds</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Passwords, notes, cards, one-time code secrets</td><td>Encrypted. We can't read them.</td></tr>
+          <tr><td>Vault and item names, websites, usernames</td><td>Encrypted. We can't read them.</td></tr>
+          <tr><td>Your master password and Secret Key</td><td>Nothing. They never leave your devices.</td></tr>
+          <tr><td>Your email address</td><td>Stored, to find your account when you sign in.</td></tr>
+          <tr><td>Who shares a vault with whom</td><td>Visible as account IDs, needed to deliver shared vaults.</td></tr>
+          <tr><td>How many items and changes a vault has, and when</td><td>Visible, as sizes and times of encrypted data.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="wrap">
+      <h2>If the server lies</h2>
+      <p class="lede">We design for the day our server is broken into, or a rogue insider tries
+        something. Your apps assume it might.</p>
+      <div class="grid">
+        <article class="card">
+          <h3>Signed history</h3>
+          <p>Each vault change is signed by its author and chained to the last. Apps verify the
+            whole chain and remember where they were, so missing, reordered or forked history is
+            caught.</p>
+        </article>
+        <article class="card">
+          <h3>Public key log</h3>
+          <p>Account keys are published in an append-only Merkle log. Apps check proofs on every
+            lookup, and once a day check that no keys were added in your name.</p>
+        </article>
+        <article class="card">
+          <h3>Post-quantum encryption</h3>
+          <p>Keys are exchanged with X-Wing (X25519 with ML-KEM-768) and changes are signed with
+            Ed25519 and ML-DSA-65 together, so breaking one algorithm is not enough.</p>
+        </article>
+        <article class="card">
+          <h3>Locked-down apps</h3>
+          <p>The desktop app keeps keys in Rust, away from the window, which can't reach the network.
+            The browser extension has no access to pages until you ask it to fill one.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="wrap"><div class="prose">
+      <h2>What it can't protect against</h2>
+      <ul>
+        <li>Malware running on your unlocked computer can see what you see.</li>
+        <li>Someone who learns both your master password and your Secret Key can open your
+          vaults.</li>
+        <li>Forget your master password without a recovery key or trusted contact, and your vaults
+          are gone for good. That's the price of nobody else holding a copy of your key.</li>
+        <li>BlackBoxus has not been independently audited yet. Until it has, please don't rely on
+          it alone for passwords you can't afford to lose.</li>
+      </ul>
+
+      <h2 id="report">Report a vulnerability</h2>
+      <p>Please don't post security issues publicly. Report them privately through the GitHub
+        repository's <strong>Security</strong> tab, using <strong>Report a vulnerability</strong>.
+        You'll hear back within 7 days, and we credit reporters in the advisory unless they prefer
+        not to be named. We ask for up to 90 days to release a fix before details are published.</p>
+    </div></div>
+  </section>
+</main>
+<!-- footer -->
+</body>
+</html>

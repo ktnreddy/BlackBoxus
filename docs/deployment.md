@@ -5,7 +5,7 @@ The BlackBoxus server runs on Cloudflare Workers with a D1 database, on the Free
 ## One-time setup
 
 1. Create a Cloudflare account and choose the `workers.dev` subdomain (`blackboxus`).
-2. Create an account API token from the **Edit Cloudflare Workers** template, with **D1: Write** added.
+2. Create an account API token from the **Edit Cloudflare Workers** template, with **D1: Write** and **Cloudflare Pages: Edit** added (Pages is for the website; an existing token can be edited to add it).
 3. In the GitHub repository, add two Actions secrets: `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
 
 Everything else happens on the first deploy:
@@ -24,6 +24,21 @@ The `Deploy server` job in `.github/workflows/ci.yml`:
 4. checks that the server answers.
 
 Server secrets are never replaced. If only some of them exist, the job stops and asks for a manual fix.
+
+## Website
+
+The website in `apps/website` is plain HTML and CSS with no scripts. `npm test` builds it into `dist/` (filling in the shared header and footer and copying the fonts from their packages) and checks every page: no scripts, no inline styles, no links or loads from other sites, and no broken links.
+
+The **Website** workflow (`.github/workflows/website.yml`) runs after every push to `main` that touches `apps/website`. It creates the Cloudflare Pages project `blackboxus` on its first run and publishes the site to `https://blackboxus.pages.dev`. Response headers, including a content security policy that allows only the site's own styles, fonts and images, are in `apps/website/src/_headers`.
+
+To look at it locally:
+
+```sh
+cd apps/website
+npm ci
+npm test
+python3 -m http.server -d dist 8080
+```
 
 ## Running locally
 

@@ -30,3 +30,8 @@ updates:
     directory: /apps/extension
     schedule:
       interval: weekly
+
+  - package-ecosystem: npm
+    directory: /apps/website
+    schedule:
+      interval: monthly

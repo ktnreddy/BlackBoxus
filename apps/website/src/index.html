@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BlackBoxus · A password manager that can't read your passwords</title>
+  <meta name="description" content="BlackBoxus is a free, open-source password manager. Everything is encrypted on your devices before it leaves them, and the apps check that the server hasn't tampered with anything.">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<!-- header -->
+<main id="main">
+  <section class="hero">
+    <div class="wrap">
+      <p class="eyebrow">Free and open-source password manager</p>
+      <h1 class="display">Your passwords,<br><span class="hi">sealed.</span></h1>
+      <p class="lede">
+        BlackBoxus encrypts everything on your own devices before it goes anywhere. Our server only
+        ever holds locked boxes, and your apps check every answer it gives, so even we can't read,
+        change or quietly roll back your vaults.
+      </p>
+      <div class="actions">
+        <a class="btn primary" href="/download">Download for Windows</a>
+        <a class="btn" href="/security">See how it works</a>
+      </div>
+      <div class="notice">
+        <span aria-hidden="true">⚠</span>
+        <span><strong>Early development.</strong> BlackBoxus has not been independently audited yet.
+          Until it has, please don't use it for passwords you can't afford to lose.</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="wrap">
+      <h2>Built so you don't have to trust us</h2>
+      <p class="lede">Most password managers ask you to trust their servers. BlackBoxus is designed to
+        stay safe even if ours is broken into or misbehaves.</p>
+      <div class="grid">
+        <article class="card">
+          <div class="icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          </div>
+          <h3>Only you hold the keys</h3>
+          <p>Your vaults are opened by two secrets: your master password and a Secret Key made on
+            your first device. Neither is ever sent to us, so a stolen copy of our database is just
+            noise.</p>
+        </article>
+        <article class="card">
+          <div class="icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
+          </div>
+          <h3>Catches a lying server</h3>
+          <p>Every change to a vault is signed and chained to the one before. Your apps replay the
+            whole history, so items can't be swapped, hidden or rolled back without you noticing.</p>
+        </article>
+        <article class="card">
+          <div class="icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14c2 .7 3 2.6 3 6"/></svg>
+          </div>
+          <h3>Share with people you've checked</h3>
+          <p>Everyone's public keys are recorded in a public, append-only log. Before you share a
+            vault you compare a short safety number, so nobody can slip in their own key.</p>
+        </article>
+        <article class="card">
+          <div class="icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+          </div>
+          <h3>A plan for the worst</h3>
+          <p>Print an Emergency Kit, keep an optional recovery key, and name a trusted contact who can
+            ask for access after a waiting period that you can cancel.</p>
+        </article>
+        <article class="card">
+          <div class="icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h4l3-8 2 16 3-8h4"/></svg>
+          </div>
+          <h3>Ready for what's next</h3>
+          <p>Encryption keys combine today's proven algorithms with new post-quantum ones, so
+            recordings of your data stay useless even to future quantum computers.</p>
+        </article>
+        <article class="card">
+          <div class="icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6"/></svg>
+          </div>
+          <h3>Open for anyone to check</h3>
+          <p>The apps, the server and the full protocol specification are free software under the
+            GNU AGPL, and every parser of untrusted data is fuzz-tested.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="wrap split">
+      <div>
+        <h2>Everything you expect, done carefully</h2>
+        <p class="lede">The everyday parts of a password manager, built so secrets stay where they
+          belong.</p>
+      </div>
+      <ol class="steps">
+        <li><span><strong>Fill logins in your browser.</strong> Chrome, Edge, Brave and Firefox ask
+          the app for one login at a time, only for the site you're on.</span></li>
+        <li><span><strong>Unlock with Windows Hello.</strong> Face, fingerprint or PIN, with the key
+          kept by Windows.</span></li>
+        <li><span><strong>One-time codes built in.</strong> Two-factor codes right next to the
+          password, computed without the secret ever reaching the screen.</span></li>
+        <li><span><strong>Bring your passwords along.</strong> Import from Bitwarden, 1Password,
+          Chrome, Firefox, LastPass, KeePass and more.</span></li>
+        <li><span><strong>Works offline.</strong> Your vaults open from your computer's encrypted copy
+          when there's no connection.</span></li>
+        <li><span><strong>Strong passwords on tap.</strong> Random passwords or passphrases from the
+          EFF word list.</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="wrap">
+      <div class="card accent">
+        <h2>Free, with no catch</h2>
+        <p>BlackBoxus is a personal project with no ads, no tracking and no paid tier. Your vaults are
+          yours: everything in them is encrypted, and the code that does it is open for you to
+          read.</p>
+        <div class="actions">
+          <a class="btn primary" href="/download">Get BlackBoxus</a>
+          <a class="btn" href="/privacy">Read the privacy notice</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+<!-- footer -->
+</body>
+</html>

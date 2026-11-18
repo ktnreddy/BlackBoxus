@@ -1,0 +1,50 @@
+# Builds the website and publishes it to Cloudflare Pages.
+name: Website
+
+on:
+  push:
+    branches: [main]
+    paths: ["apps/website/**", ".github/workflows/website.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WRANGLER_SEND_METRICS: "false"
+    defaults:
+      run:
+        working-directory: apps/website
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/website/package-lock.json
+      - name: Build and check
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+      - name: Create the Pages project on the first run
+        # The API token needs the "Cloudflare Pages: Edit" permission.
+        run: |
+          set -euo pipefail
+          if ! npx --yes wrangler@4.161.0 pages project list --json | jq -e 'any(.[]; [.[]?] | index("blackboxus") != null)' > /dev/null; then
+            npx --yes wrangler@4.161.0 pages project create blackboxus --production-branch main
+          fi
+      - name: Publish
+        run: npx --yes wrangler@4.161.0 pages deploy dist --project-name blackboxus --branch main --commit-hash "$GITHUB_SHA"
