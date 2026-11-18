@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the iOS app's Info.plist by Tauri. iOS shows these when it
+     first asks for the camera and Face ID. -->
+<plist version="1.0">
+<dict>
+	<key>NSCameraUsageDescription</key>
+	<string>BlackBoxus uses the camera only to scan the QR code a website shows when you set up a one-time code. The picture stays on your iPhone.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Unlock BlackBoxus with Face ID instead of typing your master password.</string>
+	<!-- Light status bar text over the app's dark screens. -->
+	<key>UIStatusBarStyle</key>
+	<string>UIStatusBarStyleLightContent</string>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<false/>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+</dict>
+</plist>

@@ -14,6 +14,11 @@ export function opened(close: () => void): void {
   open.push(close);
 }
 
+/** Whether there is a page or sheet to step back from. */
+export function canGoBack(): boolean {
+  return open.length > 0;
+}
+
 /** Steps back once, closing the newest page or sheet. */
 export function back(): void {
   if (open.length > 0) history.back();

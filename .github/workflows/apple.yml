@@ -1,0 +1,160 @@
+name: Apple
+
+# Builds the Mac app (.dmg) and checks the iPhone app builds and starts in
+# the iOS Simulator, taking screenshots on a few iPhones and an iPad.
+#
+# macOS runners cost about ten times Linux ones against the monthly Actions
+# allowance, so this runs only when started by hand (Actions > Apple > Run
+# workflow) or when this file changes, not on every push.
+#
+# Nothing here is signed yet. The Mac app is ad-hoc signed, so macOS asks
+# you to allow it the first time (System Settings > Privacy & Security >
+# Open Anyway). Touch ID unlock and installing on a real iPhone need the
+# Apple Developer Program; see docs/apple.md.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/apple.yml"
+  workflow_dispatch:
+    inputs:
+      build:
+        description: What to build
+        type: choice
+        options: [both, mac, iphone]
+        default: both
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  mac:
+    name: Mac app
+    if: github.event_name == 'push' || inputs.build != 'iphone'
+    runs-on: macos-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: 1.97.0
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: desktop-mac
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Install build tools
+        run: npm ci --no-audit --no-fund
+      - name: Build the screens
+        run: npm run build
+      - name: Clippy (macOS)
+        working-directory: .
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo clippy -p blackboxus-desktop --all-targets --locked
+      - name: Tests (macOS)
+        working-directory: .
+        run: cargo test -p blackboxus-desktop --locked
+      # Apple silicon only; Intel Macs would need a second build.
+      - name: Build the .dmg
+        run: npx tauri build --ci --bundles app,dmg -- --locked
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: blackboxus-mac-dmg
+          path: target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+  iphone:
+    name: iPhone app (Simulator)
+    if: github.event_name == 'push' || inputs.build != 'mac'
+    runs-on: macos-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: 1.97.0
+          components: clippy
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: desktop-ios
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Install build tools
+        run: |
+          npm ci --no-audit --no-fund
+          brew install xcodegen
+      - name: Build the screens
+        run: npm run build
+      - name: Clippy (iOS)
+        working-directory: .
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo clippy -p blackboxus-desktop --lib --target aarch64-apple-ios --locked
+      # The Xcode project is generated here each time from tauri.conf.json,
+      # Info.ios.plist and icons/ios, so nothing Apple-specific is kept in
+      # the repository until the app is signed and shipped.
+      - name: Generate the Xcode project
+        run: npx tauri ios init --ci
+      - name: Build for the Simulator
+        run: |
+          project=$(ls -d src-tauri/gen/apple/*.xcodeproj | head -1)
+          scheme=$(xcodebuild -list -json -project "$project" | python3 -c 'import json,sys; s=json.load(sys.stdin)["project"]["schemes"]; print(next(x for x in s if x.endswith("_iOS")))')
+          echo "Building $scheme from $project"
+          xcodebuild -project "$project" -scheme "$scheme" -configuration Debug \
+            -sdk iphonesimulator -arch arm64 -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO build | tail -40
+          app=$(ls -d "$RUNNER_TEMP"/dd/Build/Products/Debug-iphonesimulator/*.app | head -1)
+          echo "APP=$app" >> "$GITHUB_ENV"
+      # Starts the app on a few devices and takes a screenshot of each, to
+      # check the screens around the notch, Dynamic Island and home
+      # indicator, and on the iPad.
+      - name: Screenshots in the Simulator
+        run: |
+          mkdir -p "$RUNNER_TEMP/shots"
+          bundle=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist")
+          for device in "iPhone SE (3rd generation)" "iPhone 16" "iPhone 16 Pro Max" "iPad Air 11-inch (M2)"; do
+            id=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next((x['udid'] for r in d.values() for x in r if x['name']==sys.argv[1]), ''))" "$device")
+            if [ -z "$id" ]; then echo "::notice::No simulator called $device"; continue; fi
+            xcrun simctl boot "$id" || true
+            xcrun simctl bootstatus "$id" -b
+            xcrun simctl install "$id" "$APP"
+            xcrun simctl launch "$id" "$bundle"
+            sleep 15
+            xcrun simctl io "$id" screenshot "$RUNNER_TEMP/shots/${device// /-}.png"
+            xcrun simctl shutdown "$id" || true
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: blackboxus-ios-simulator-screenshots
+          path: ${{ runner.temp }}/shots/*.png
+          if-no-files-found: warn
+          retention-days: 14

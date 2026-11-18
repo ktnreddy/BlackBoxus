@@ -464,6 +464,7 @@ dependencies = [
  "keyring-core",
  "p256",
  "psl",
+ "security-framework",
  "serde",
  "serde_json",
  "sha1",

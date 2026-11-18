@@ -66,7 +66,21 @@ fn set(clipboard: &mut arboard::Clipboard, text: &str) -> Result<(), arboard::Er
             .exclude_from_cloud()
             .text(text)
     }
-    #[cfg(not(windows))]
+    // Marked as concealed (org.nspasteboard.ConcealedType), which clipboard
+    // managers and Universal Clipboard history skip.
+    #[cfg(target_os = "macos")]
+    {
+        use arboard::SetExtApple;
+        clipboard.set().exclude_from_history().text(text)
+    }
+    // Marked with KDE's password manager hint, which Klipper and other
+    // clipboard managers skip.
+    #[cfg(target_os = "linux")]
+    {
+        use arboard::SetExtLinux;
+        clipboard.set().exclude_from_history().text(text)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         clipboard.set_text(text)
     }

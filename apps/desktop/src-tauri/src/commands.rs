@@ -530,14 +530,14 @@ pub(crate) async fn resolve_conflict(
 /// such as an otpauth:// link with a one-time code secret.
 #[tauri::command]
 pub(crate) async fn scan_code(app: AppHandle) -> Result<String, AppError> {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         let handle = app.clone();
         tauri::async_runtime::spawn_blocking(move || crate::scanner::scan(&handle))
             .await
             .map_err(|_| AppError::Internal)?
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(mobile))]
     {
         let _ = app;
         Err(AppError::CameraDenied)
@@ -547,9 +547,9 @@ pub(crate) async fn scan_code(app: AppHandle) -> Result<String, AppError> {
 /// Stops a scan in progress.
 #[tauri::command]
 pub(crate) fn cancel_scan(app: AppHandle) {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     crate::scanner::cancel(&app);
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(mobile))]
     let _ = app;
 }
 

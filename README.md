@@ -37,17 +37,18 @@ All cryptography lives in one Rust library, `vault-core`, shared by every app. T
 | Crypto core | Rust (`vault-core`) | Every client |
 | Server | Rust on Cloudflare Workers, D1, Durable Objects | Cloudflare |
 | Website | Static site | Cloudflare Pages |
-| Desktop app | Tauri 2 + Svelte 5 + TypeScript | Windows and Linux; macOS later |
+| Desktop app | Tauri 2 + Svelte 5 + TypeScript | Windows, Linux and macOS |
 | Browser extension | TypeScript + WebAssembly | Firefox, Chrome |
 | Android app | The desktop app, built for phones by Tauri 2 | Android 9 and later |
-| iOS app | Swift + SwiftUI | iPhone, iPad (planned) |
+| iPhone and iPad app | The desktop app, built for iOS by Tauri 2 | iOS 16 and later (in testing, not signed yet) |
 
 ## Repository layout
 
 ```
 apps/
-  desktop/       The app for Windows, Linux and Android: Svelte screens in src/,
-                 Rust in src-tauri/, the Android project in src-tauri/gen/android/
+  desktop/       The app for Windows, macOS, Linux, Android and iOS: Svelte screens
+                 in src/, Rust in src-tauri/, the Android project in
+                 src-tauri/gen/android/
   extension/     The browser extension for Chrome, Edge, Brave and Firefox
   website/       The website, plain HTML and CSS on Cloudflare Pages
 crates/
@@ -59,6 +60,7 @@ crates/
 fuzz/            Fuzz targets for every parser of untrusted data
 docs/
   android.md
+  apple.md
   architecture.md
   deployment.md
   desktop.md
@@ -75,7 +77,7 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
-The desktop app also needs Node.js 22; see [`docs/desktop.md`](docs/desktop.md). For the Android app, see [`docs/android.md`](docs/android.md).
+The desktop app also needs Node.js 22; see [`docs/desktop.md`](docs/desktop.md). For the Android app, see [`docs/android.md`](docs/android.md); for the Mac and iPhone apps, [`docs/apple.md`](docs/apple.md).
 
 Fuzz testing uses [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz):
 
@@ -92,7 +94,7 @@ cargo fuzz run -s none tampering -- -max_total_time=60
 3. Server on Cloudflare (running at `https://api.blackboxus.workers.dev`; see [docs/deployment.md](docs/deployment.md))
 4. Desktop app and browser extension
 5. Android app
-6. iOS app
+6. Mac and iPhone apps (written; signing and iPhone autofill to come)
 
 ## Security
 

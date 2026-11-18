@@ -10,6 +10,7 @@
   import NewPassword from "./NewPassword.svelte";
   import PasswordInput from "./PasswordInput.svelte";
   import { opened, reset } from "./nav";
+  import { startIOS } from "./ios";
   import {
     errorMessage,
     recoverAccount,
@@ -24,6 +25,9 @@
 
   // svelte-ignore state_referenced_locally
   let status = $state<AppStatus>(initial);
+  $effect(() => {
+    if (status.platform === "ios") startIOS();
+  });
   /** The Emergency Kit, held only until the user confirms they wrote it down. */
   let kit = $state<EmergencyKit | null>(null);
   let kitAgain = $state(false);
@@ -111,6 +115,7 @@
     />
   {:else if offerFingerprint && !status.locked}
     <FingerprintOffer
+      {status}
       signup={offerInSignup}
       changed={fingerprintChanged}
       ondone={(s) => {

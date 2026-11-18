@@ -6,6 +6,10 @@
 //! (RSA with PKCS #1 v1.5 padding is deterministic), and the device key is
 //! derived from that signature. The signature, and so the device key, can
 //! only be produced on this computer, by this Windows user, after Hello.
+//!
+//! Android (fingerprint) and Apple devices (Touch ID, Face ID) keep a random
+//! secret that the system releases only after a biometric check, and "sign"
+//! with an HMAC keyed by it, which is just as deterministic.
 
 use zeroize::Zeroizing;
 
@@ -19,6 +23,11 @@ pub trait HelloKeys: Send + Sync {
     /// fingerprint, face or screen lock), so the user can be told how.
     fn setup_needed(&self) -> bool {
         false
+    }
+    /// What the person knows it as, for the screens: `windows_hello`,
+    /// `fingerprint`, `touch_id` or `face_id`.
+    fn kind(&self) -> &'static str {
+        "windows_hello"
     }
     /// Creates (or replaces) the named key, asking the user to verify.
     ///
@@ -37,8 +46,9 @@ pub trait HelloKeys: Send + Sync {
     fn delete(&self, name: &str);
 }
 
-/// The provider for this build. Android uses [`fingerprint`] instead.
-#[cfg(not(target_os = "android"))]
+/// The provider for this build. Android uses [`fingerprint`] and Apple
+/// devices [`touch_id`] instead.
+#[cfg(not(any(target_os = "android", target_os = "macos", target_os = "ios")))]
 pub fn provider() -> Box<dyn HelloKeys> {
     #[cfg(windows)]
     {
@@ -61,18 +71,27 @@ pub fn fingerprint(app: tauri::AppHandle, dir: std::path::PathBuf) -> Box<dyn He
     Box::new(android::Fingerprint::new(app, dir))
 }
 
+/// Touch ID or Face ID on a Mac, iPhone or iPad.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub fn touch_id(app: tauri::AppHandle) -> Box<dyn HelloKeys> {
+    if cfg!(debug_assertions) && std::env::var_os("BLACKBOXUS_FAKE_HELLO").is_some() {
+        Box::new(fake::FakeHello::default())
+    } else {
+        Box::new(apple::TouchId::new(app))
+    }
+}
+
 /// The development stand-in, for tests.
 #[cfg(all(test, not(any(windows, target_os = "android"))))]
 pub fn fake() -> Box<dyn HelloKeys> {
     Box::new(fake::FakeHello::default())
 }
 
-/// No Windows Hello: macOS and Linux builds, until their own unlock methods
-/// exist.
-#[cfg(not(any(windows, target_os = "android")))]
+/// Nothing to unlock with: Linux builds, until a method exists there.
+#[cfg(not(any(windows, target_os = "android", target_os = "macos", target_os = "ios")))]
 struct Unavailable;
 
-#[cfg(not(any(windows, target_os = "android")))]
+#[cfg(not(any(windows, target_os = "android", target_os = "macos", target_os = "ios")))]
 impl HelloKeys for Unavailable {
     fn available(&self) -> bool {
         false
@@ -220,6 +239,141 @@ mod fake {
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod apple {
+    //! The secret is a keychain item in the "data protection" keychain with
+    //! an access control of `biometryCurrentSet`: the system hands it over
+    //! only after Touch ID or Face ID with the fingers or face enrolled when
+    //! it was made. Enrolling another one, or removing the passcode, makes
+    //! it unreadable for good, so unlock turns off (as on Android). It is
+    //! "this device only": never in backups or on another device.
+    //!
+    //! On a Mac the data protection keychain needs a signed app; an
+    //! unsigned build reports Touch ID as unavailable.
+
+    use std::sync::OnceLock;
+
+    use hmac::{Hmac, KeyInit, Mac};
+    use security_framework::access_control::{ProtectionMode, SecAccessControl};
+    use security_framework::passwords::{
+        AccessControlOptions, PasswordOptions, delete_generic_password_options, generic_password,
+        set_generic_password_options,
+    };
+    use sha2::Sha256;
+    use tauri_plugin_biometric::BiometricExt;
+    use zeroize::Zeroizing;
+
+    use super::HelloKeys;
+    use crate::error::AppError;
+
+    const SERVICE: &str = "BlackBoxus device unlock";
+
+    // Security framework result codes (SecBase.h).
+    const USER_CANCELED: i32 = -128;
+    const AUTH_FAILED: i32 = -25293;
+    const ITEM_NOT_FOUND: i32 = -25300;
+
+    pub(super) struct TouchId {
+        app: tauri::AppHandle,
+    }
+
+    impl TouchId {
+        pub(super) fn new(app: tauri::AppHandle) -> Self {
+            Self { app }
+        }
+    }
+
+    fn options(name: &str) -> PasswordOptions {
+        let mut options = PasswordOptions::new_generic_password(SERVICE, name);
+        options.use_protected_keychain();
+        options
+    }
+
+    /// Whether this build may use the data protection keychain: always on
+    /// iOS; on a Mac only when the app is signed with an application
+    /// identifier. Tried once with a harmless item.
+    fn keychain_usable() -> bool {
+        static USABLE: OnceLock<bool> = OnceLock::new();
+        *USABLE.get_or_init(|| {
+            let probe = "probe";
+            let written = set_generic_password_options(b"probe", options(probe)).is_ok();
+            // Best effort: the probe may not have been written.
+            let _ = delete_generic_password_options(options(probe));
+            written
+        })
+    }
+
+    fn failure(code: i32) -> AppError {
+        match code {
+            USER_CANCELED => AppError::HelloCancelled,
+            AUTH_FAILED => AppError::HelloLockedOut,
+            // Gone, or made unreadable by a change to Touch ID or Face ID.
+            ITEM_NOT_FOUND => AppError::HelloMissing,
+            _ => AppError::HelloUnavailable,
+        }
+    }
+
+    impl HelloKeys for TouchId {
+        fn kind(&self) -> &'static str {
+            match self.app.biometric().status().map(|s| s.biometry_type) {
+                Ok(tauri_plugin_biometric::BiometryType::FaceID) => "face_id",
+                _ => "touch_id",
+            }
+        }
+
+        fn available(&self) -> bool {
+            self.app.biometric().status().is_ok_and(|s| s.is_available) && keychain_usable()
+        }
+
+        fn setup_needed(&self) -> bool {
+            self.app.biometric().status().is_ok_and(|s| {
+                !s.is_available
+                    && matches!(
+                        s.error_code.as_deref(),
+                        Some("biometryNotEnrolled" | "passcodeNotSet")
+                    )
+            })
+        }
+
+        fn create(&self, name: &str) -> Result<(), AppError> {
+            if !self.available() {
+                return Err(AppError::HelloUnavailable);
+            }
+            let mut secret = Zeroizing::new([0_u8; 32]);
+            getrandom::fill(secret.as_mut()).map_err(|_| AppError::Internal)?;
+            let access = SecAccessControl::create_with_protection(
+                Some(ProtectionMode::AccessibleWhenPasscodeSetThisDeviceOnly),
+                AccessControlOptions::BIOMETRY_CURRENT_SET.bits(),
+            )
+            .map_err(|_| AppError::HelloUnavailable)?;
+            // Replacing an item behind Touch ID would ask for it; a fresh one
+            // doesn't, so the first unlock is the only check.
+            let _ = delete_generic_password_options(options(name));
+            let mut item = options(name);
+            item.set_access_control(access);
+            item.set_label("BlackBoxus unlock");
+            set_generic_password_options(secret.as_ref(), item).map_err(|e| failure(e.code()))
+        }
+
+        fn sign(&self, name: &str, challenge: &[u8]) -> Result<Zeroizing<Vec<u8>>, AppError> {
+            let secret =
+                Zeroizing::new(generic_password(options(name)).map_err(|e| failure(e.code()))?);
+            if secret.len() != 32 {
+                return Err(AppError::HelloMissing);
+            }
+            let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&secret)
+                .map_err(|_| AppError::Internal)?;
+            mac.update(challenge);
+            Ok(Zeroizing::new(mac.finalize().into_bytes().to_vec()))
+        }
+
+        fn delete(&self, name: &str) {
+            // Best effort: it may already be gone.
+            let _ = delete_generic_password_options(options(name));
+        }
+    }
+}
+
 /// Android's fingerprint or face unlock, through the Keystore.
 ///
 /// Android has no deterministic signing key like Windows Hello's, so each
@@ -300,6 +454,10 @@ mod android {
     }
 
     impl HelloKeys for Fingerprint {
+        fn kind(&self) -> &'static str {
+            "fingerprint"
+        }
+
         fn available(&self) -> bool {
             self.app.biometric().status().is_ok_and(|s| s.is_available)
         }

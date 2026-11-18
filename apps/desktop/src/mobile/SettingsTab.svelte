@@ -29,6 +29,7 @@
     type EmergencyKit,
     type VaultSummary,
   } from "../lib/api";
+  import { unlockWords } from "../lib/unlockWords";
 
   let {
     status,
@@ -52,6 +53,7 @@
     syncedAt: number | null;
   } = $props();
 
+  const w = $derived(unlockWords(status));
   const CHOICES = [0, 1, 5, 15, 60];
   const lockLabel = (m: number) =>
     m === 0 ? "Straight away" : m === 60 ? "After 1 hour" : `After ${m} minute${m === 1 ? "" : "s"}`;
@@ -142,7 +144,7 @@
     try {
       const next = status.hello.enabled ? await helloDisable() : await helloEnable();
       onchange(next);
-      onnotice(next.hello.enabled ? "Fingerprint unlock is on." : "Fingerprint unlock is off.");
+      onnotice(`${w.Unlock} is ${next.hello.enabled ? "on" : "off"}.`);
     } catch (e) {
       if (!(isAppError(e) && e.code === "hello_cancelled")) onnotice(errorMessage(e));
     } finally {
@@ -284,16 +286,16 @@
     {#if status.hello.available || status.hello.setup_needed}
       <label class="st-toggle">
         <span class="st-text">
-          <span class="st-label">Unlock with fingerprint</span>
+          <span class="st-label">Unlock with {w.name}</span>
           <span class="st-sub">
             {#if !status.hello.available}
-              Add a fingerprint in your phone's Settings first
+              Set up {w.name} in {w.where} first
             {:else if offline && !status.hello.enabled}
               Needs a connection to turn on
             {:else if status.hello.enabled}
               Master password still needed every 14 days
             {:else}
-              Uses the fingerprints saved on this phone
+              Uses the {w.things} saved on this {w.device}
             {/if}
           </span>
         </span>
@@ -315,8 +317,14 @@
 
   {#if status.hello.available || status.hello.setup_needed}
     <p class="st-note">
-      Fingerprints are added and removed in your phone's Settings. Any of them can unlock BlackBoxus.
-      When one is added, fingerprint unlock turns off until you turn it on again here.
+      {#if status.hello.kind === "face_id"}
+        Face ID is set up in {w.where}. If it's reset or another appearance is added, Face ID unlock
+        turns off until you turn it on again here.
+      {:else}
+        {w.things.charAt(0).toUpperCase() + w.things.slice(1)} are added and removed in {w.where}. Any of
+        them can unlock BlackBoxus. When one is added, {w.unlock} turns off until you turn it on again
+        here.
+      {/if}
     </p>
   {/if}
 

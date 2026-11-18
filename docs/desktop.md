@@ -6,8 +6,9 @@ The desktop app lives in `apps/desktop`. It is built with
 else runs in Rust (`src-tauri/`) on top of `client-core`.
 
 Windows is the first platform. Linux packages (.deb and AppImage) are built
-too; macOS comes later. The same app also builds for Android: see
-[android.md](android.md).
+too, and a Mac app (see [apple.md](apple.md)). The same app also builds for
+Android ([android.md](android.md)) and iPhone and iPad
+([apple.md](apple.md)).
 
 ## How it is split
 

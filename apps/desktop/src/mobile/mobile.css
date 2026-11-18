@@ -16,7 +16,12 @@
   /* On tablets and wide windows the app keeps a phone-width column in the
      middle, so lines stay readable. The transform makes this column the
      frame for full-screen pages and sheets too. */
-  max-width: 640px;
+  /* Kept clear of the notch or Dynamic Island and the rounded corners,
+     which are at the sides in landscape. */
+  max-width: min(
+    640px,
+    calc(100vw - 2 * max(env(safe-area-inset-left), env(safe-area-inset-right)))
+  );
   margin: 0 auto;
   position: relative;
   transform: translateZ(0);
@@ -541,6 +546,32 @@ button.m-row:active {
   font: 400 15px "DM Sans Variable", sans-serif;
   display: grid;
   place-items: center;
+}
+
+/* iPhone and iPad (see ios.ts). The frame ends above the keyboard, and the
+   gap kept for the home indicator goes while the keyboard covers it. The
+   page itself never rubber-bands; lists inside it still do. */
+html.ios,
+html.ios body {
+  overscroll-behavior: none;
+}
+html.ios .m-root {
+  height: calc(100% - var(--kb, 0px));
+}
+html.ios.kb .m-root {
+  --bb: 0px;
+}
+/* Covers the vault while the app is in the app switcher. */
+html.ios.away .m-root > * {
+  visibility: hidden;
+}
+
+/* Reads the system text size (Dynamic Type). */
+.dt-probe {
+  font: -apple-system-body;
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 /* After the reset: fields are measured with their border, as in the designs. */

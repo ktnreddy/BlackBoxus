@@ -53,6 +53,8 @@ pub struct AppStatus {
     pub hello: HelloStatus,
     /// Whether this is a phone, where there is no browser extension.
     pub mobile: bool,
+    /// The system: `windows`, `macos`, `linux`, `android` or `ios`.
+    pub platform: &'static str,
 }
 
 #[derive(Default)]
@@ -153,6 +155,7 @@ impl AppState {
             offline: inner.offline,
             hello: self.device.status(account_id.as_ref(), now_ms()),
             mobile: cfg!(any(target_os = "android", target_os = "ios")),
+            platform: std::env::consts::OS,
         }
     }
 

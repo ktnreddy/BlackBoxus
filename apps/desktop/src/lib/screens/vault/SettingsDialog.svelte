@@ -20,6 +20,7 @@
     type AppStatus,
     type EmergencyKit,
   } from "../../api";
+  import { unlockWords } from "../../unlockWords";
 
   let {
     status,
@@ -40,6 +41,7 @@
     onclose: () => void;
     onnotice: (text: string) => void;
   } = $props();
+  const w = $derived(unlockWords(status));
 
   const CHOICES = [1, 5, 10, 15, 30, 60];
 
@@ -156,7 +158,7 @@
     try {
       const next = status.hello.enabled ? await helloDisable() : await helloEnable();
       onchange(next);
-      onnotice(next.hello.enabled ? "Windows Hello unlock is on." : "Windows Hello unlock is off.");
+      onnotice(`${w.name} unlock is ${next.hello.enabled ? "on" : "off"}.`);
     } catch (e) {
       error = errorMessage(e);
     } finally {
@@ -221,24 +223,26 @@
       </button>
     </div>
 
-    <!-- Phones have no Windows Hello and no browser extension. -->
-    {#if !status.mobile}
+    <!-- Windows Hello, or Touch ID on a Mac. Phones show their own settings;
+         Linux has no such unlock yet. -->
+    {#if !status.mobile && (status.platform === "windows" || status.hello.available || status.hello.setup_needed || status.hello.enabled)}
     <div class="setting">
       <div class="text">
-        <span class="name"><Icon name="hello" size={18} />Unlock with Windows Hello</span>
+        <span class="name"><Icon name="hello" size={18} />Unlock with {w.name}</span>
         <span class="small">
           {#if status.hello.available}
-            Use your face, fingerprint or PIN instead of typing your master password. You'll still
-            enter the master password every 14 days. The key stays in this device's security chip
-            and never leaves it.
+            Use {w.yours} instead of typing your master password. You'll still enter the master
+            password every 14 days. The key stays in this {w.device}'s security chip and never
+            leaves it.
+          {:else if status.platform === "macos" && !status.hello.setup_needed}
+            Touch ID needs the signed BlackBoxus app from the website, on a Mac with Touch ID.
           {:else}
-            Windows Hello isn't set up on this device. Turn it on in Windows Settings, under
-            Accounts, Sign-in options.
+            {w.name} isn't set up on this {w.device}. Turn it on in {w.where}.
           {/if}
         </span>
       </div>
       <label class="switch">
-        <span class="visually-hidden">Unlock with Windows Hello</span>
+        <span class="visually-hidden">Unlock with {w.name}</span>
         <input
           type="checkbox"
           role="switch"

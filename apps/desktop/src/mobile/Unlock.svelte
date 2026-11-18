@@ -11,6 +11,7 @@
     unlockWithHello,
     type AppStatus,
   } from "../lib/api";
+  import { unlockWords } from "../lib/unlockWords";
 
   let {
     status,
@@ -28,6 +29,7 @@
     onfingerprintreset?: () => void;
   } = $props();
 
+  const w = $derived(unlockWords(status));
   const fingerprintReady = $derived(
     status.hello.available && status.hello.enabled && !status.hello.needs_password,
   );
@@ -112,10 +114,10 @@
     <h1 class="ul-title">Welcome back</h1>
     <p class="ul-who">{status.account?.email}</p>
     {#if usePrint}
-      <button type="button" class="ul-print" onclick={withFingerprint} disabled={busy} aria-label="Unlock with fingerprint">
-        <Icon name="fingerprint" size={52} weight={1.5} />
+      <button type="button" class="ul-print" onclick={withFingerprint} disabled={busy} aria-label={`Unlock with ${w.name}`}>
+        <Icon name={w.icon === "face" ? "face" : "fingerprint"} size={52} weight={1.5} />
       </button>
-      <p class="ul-hint">Touch the sensor to unlock</p>
+      <p class="ul-hint">{w.icon === "face" ? `Tap to unlock with ${w.name}` : "Touch the sensor to unlock"}</p>
       {#if error || notice}<p class="m-error" role="alert">{error || notice}</p>{/if}
     {:else}
       <form id="unlock-form" class="ul-form" onsubmit={submit}>
@@ -123,7 +125,7 @@
         {#if error || notice}
           <p class="m-error" role="alert">{error || notice}</p>
         {:else if status.hello.enabled && status.hello.needs_password}
-          <p class="ul-note">It's been 14 days, so type your master password this time. Your fingerprint works again after that.</p>
+          <p class="ul-note">It's been 14 days, so type your master password this time. {w.name === "fingerprint" ? "Your fingerprint" : w.name} works again after that.</p>
         {/if}
         <button type="submit" class="m-fl-btn" disabled={busy || password.length === 0}>{busy ? "Unlocking…" : "Unlock"}</button>
         <button type="button" class="m-fl-link" onclick={onforgot} disabled={busy}>Forgot your master password?</button>
@@ -133,7 +135,7 @@
   <footer class="ul-foot">
     {#if fingerprintReady}
       <button type="button" class="ul-switch" onclick={() => (typing = !typing)} disabled={busy}>
-        {typing ? "Use fingerprint" : "Use master password"}
+        {typing ? `Use ${w.name}` : "Use master password"}
       </button>
     {/if}
     <button type="button" class="ul-out" onclick={notYou} onblur={() => (confirmSignOut = false)} disabled={busy}>

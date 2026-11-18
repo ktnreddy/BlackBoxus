@@ -16,9 +16,13 @@ export interface AppStatus {
     needs_password: boolean;
     /** The sensor is there but no fingerprint, face or screen lock is set up yet. */
     setup_needed: boolean;
+    /** Which it is. */
+    kind: "windows_hello" | "fingerprint" | "touch_id" | "face_id";
   };
   /** A phone: no browser extension, and the window is narrow. */
   mobile: boolean;
+  /** The system the app runs on. */
+  platform: "windows" | "macos" | "linux" | "android" | "ios";
 }
 
 /** An error from the Rust side, safe to show to the user. */

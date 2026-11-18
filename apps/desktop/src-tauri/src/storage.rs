@@ -92,8 +92,24 @@ pub fn init_secret_store() -> Result<(), AppError> {
 
 type Store = std::sync::Arc<keyring_core::CredentialStore>;
 
+/// An entry in the store. On iPhones and iPads it can be read only while
+/// the device is unlocked, and never leaves it: it isn't restored from a
+/// backup or moved to a new device, like the Android Keystore's keys.
+fn keychain_entry(user: &str) -> Result<Entry, AppError> {
+    #[cfg(all(target_os = "ios", not(test)))]
+    {
+        let modifiers =
+            std::collections::HashMap::from([("access-policy", "WhenUnlockedThisDeviceOnly")]);
+        Entry::new_with_modifiers(SERVICE, user, &modifiers).map_err(|_| AppError::Storage)
+    }
+    #[cfg(not(all(target_os = "ios", not(test))))]
+    {
+        Entry::new(SERVICE, user).map_err(|_| AppError::Storage)
+    }
+}
+
 /// A store that keeps entries in memory only, until the app closes.
-#[cfg(any(test, not(any(windows, target_os = "macos"))))]
+#[cfg(any(test, not(any(windows, target_os = "macos", target_os = "ios"))))]
 fn memory_store() -> Result<Store, AppError> {
     Ok(keyring_core::mock::Store::new().map_err(|_| AppError::Storage)?)
 }
@@ -108,6 +124,13 @@ fn platform_store() -> Result<Store, AppError> {
 #[cfg(all(target_os = "macos", not(test)))]
 fn platform_store() -> Result<Store, AppError> {
     Ok(apple_native_keyring_store::keychain::Store::new().map_err(|_| AppError::Storage)?)
+}
+
+/// The iPhone's or iPad's keychain (its only one, the "data protection"
+/// keychain), in the app's own access group.
+#[cfg(all(target_os = "ios", not(test)))]
+fn platform_store() -> Result<Store, AppError> {
+    Ok(apple_native_keyring_store::protected::Store::new().map_err(|_| AppError::Storage)?)
 }
 
 /// The desktop's Secret Service (GNOME Keyring or KWallet). Without one,
@@ -137,7 +160,8 @@ fn platform_store() -> Result<Store, AppError> {
         windows,
         target_os = "macos",
         target_os = "linux",
-        target_os = "android"
+        target_os = "android",
+        target_os = "ios"
     ))
 ))]
 fn platform_store() -> Result<Store, AppError> {
@@ -284,7 +308,7 @@ impl Storage {
 }
 
 fn pairings_entry() -> Result<Entry, AppError> {
-    Entry::new(SERVICE, "browser-pairings").map_err(|_| AppError::Storage)
+    keychain_entry("browser-pairings")
 }
 
 /// The paired browsers' keys, as JSON, kept in the credential store.
@@ -324,7 +348,7 @@ pub fn delete_browser_pairings() -> Result<(), AppError> {
 }
 
 fn entry(record: &AccountRecord) -> Result<Entry, AppError> {
-    Entry::new(SERVICE, &format!("secret-key/{}", record.account_id)).map_err(|_| AppError::Storage)
+    keychain_entry(&format!("secret-key/{}", record.account_id))
 }
 
 /// Writes a file so a crash leaves either the old or the new contents.

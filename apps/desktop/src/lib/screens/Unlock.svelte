@@ -3,6 +3,7 @@
   import PasswordField from "../components/PasswordField.svelte";
   import TopNav from "../components/TopNav.svelte";
   import { errorMessage, unlock, unlockWithHello, type AppStatus } from "../api";
+  import { unlockWords } from "../unlockWords";
 
   let {
     status,
@@ -16,6 +17,7 @@
     onforgot: () => void;
   } = $props();
 
+  const w = $derived(unlockWords(status));
   const helloReady = $derived(
     status.hello.available && status.hello.enabled && !status.hello.needs_password,
   );
@@ -75,8 +77,8 @@
         <p class="note error" role="alert"><Icon name="alert" />{error || notice}</p>
       {:else if status.hello.enabled && status.hello.needs_password}
         <p class="small">
-          It's been 14 days, so enter your master password this time. Windows Hello works again
-          after that.
+          It's been 14 days, so enter your master password this time. {w.name} works again after
+          that.
         </p>
       {/if}
       <div class="actions">
@@ -85,7 +87,7 @@
         </button>
         {#if helloReady}
           <button type="button" class="btn ghost" disabled={busy} onclick={hello}>
-            <Icon name="hello" />Windows Hello
+            <Icon name="hello" />{w.name}
           </button>
         {/if}
       </div>

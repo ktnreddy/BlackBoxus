@@ -252,6 +252,7 @@ code,
   font-size: 16px;
   line-height: 1;
   white-space: nowrap;
+  max-width: 100%;
 }
 .btn:hover {
   color: var(--text);
@@ -463,6 +464,12 @@ section.block {
 /* On narrow phones the header keeps the logo and the download button;
    the other pages are linked from the footer. */
 @media (max-width: 440px) {
+  /* Long labels wrap rather than push the page sideways on small phones. */
+  .btn {
+    white-space: normal;
+    line-height: 1.25;
+    text-align: center;
+  }
   .nav li:not(:last-child) {
     display: none;
   }

@@ -57,6 +57,8 @@ pub struct HelloStatus {
     /// The hardware is there but no fingerprint, face or screen lock is
     /// set up on the device yet.
     pub setup_needed: bool,
+    /// Which it is: `windows_hello`, `fingerprint`, `touch_id` or `face_id`.
+    pub kind: &'static str,
 }
 
 fn credential_name(account: &AccountId) -> String {
@@ -116,6 +118,7 @@ impl DeviceUnlock {
             needs_password: saved
                 .is_some_and(|s| now_ms.saturating_sub(s.password_ms) > PASSWORD_EVERY_MS),
             setup_needed: self.hello.setup_needed(),
+            kind: self.hello.kind(),
         }
     }
 

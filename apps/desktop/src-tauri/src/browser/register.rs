@@ -163,7 +163,10 @@ pub fn unregister(app: &AppHandle) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Where browsers look for hosts on Linux, for development.
+/// Where browsers look for hosts on macOS and Linux: a folder per browser,
+/// inside that browser's own settings folder. Browsers that aren't
+/// installed (no settings folder) are skipped, so nothing is left behind
+/// for them.
 #[cfg(not(windows))]
 fn unix_dirs(family: Family) -> Vec<PathBuf> {
     #[cfg(debug_assertions)]
@@ -177,12 +180,46 @@ fn unix_dirs(family: Family) -> Vec<PathBuf> {
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
         return Vec::new();
     };
+    #[cfg(target_os = "macos")]
+    let (base, chromium, firefox) = (
+        home.join("Library").join("Application Support"),
+        [
+            "Google/Chrome",
+            "Chromium",
+            "Microsoft Edge",
+            "BraveSoftware/Brave-Browser",
+            "Vivaldi",
+        ],
+        ("Mozilla", "NativeMessagingHosts"),
+    );
+    #[cfg(not(target_os = "macos"))]
+    let (base, chromium, firefox) = (
+        home.join(".config"),
+        [
+            "google-chrome",
+            "chromium",
+            "microsoft-edge",
+            "BraveSoftware/Brave-Browser",
+            "vivaldi",
+        ],
+        (".mozilla", "native-messaging-hosts"),
+    );
+    let installed = |dir: PathBuf| dir.is_dir().then_some(dir);
     match family {
-        Family::Chromium => ["google-chrome", "chromium"]
+        Family::Chromium => chromium
             .iter()
-            .map(|b| home.join(".config").join(b).join("NativeMessagingHosts"))
+            .filter_map(|b| installed(base.join(b)))
+            .map(|d| d.join("NativeMessagingHosts"))
             .collect(),
-        Family::Firefox => vec![home.join(".mozilla").join("native-messaging-hosts")],
+        Family::Firefox => {
+            // Firefox on Linux keeps it in ~/.mozilla, not ~/.config.
+            #[cfg(not(target_os = "macos"))]
+            let base = home;
+            installed(base.join(firefox.0))
+                .map(|d| d.join(firefox.1))
+                .into_iter()
+                .collect()
+        }
     }
 }
 

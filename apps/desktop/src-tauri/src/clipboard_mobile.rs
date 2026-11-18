@@ -5,7 +5,8 @@
 //! locked, the clipboard is cleared unless it visibly holds something the
 //! user copied since. Android only lets apps read the clipboard while in
 //! the foreground; when it can't be read, it is cleared anyway, since a
-//! leftover secret is worse than a lost copy.
+//! leftover secret is worse than a lost copy. iOS asks the person before
+//! an app reads the clipboard, so there it is always cleared.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -37,10 +38,13 @@ fn clear_if_ours(last: &mut Option<Zeroizing<String>>) {
         return;
     };
     let clipboard = app.clipboard();
-    let replaced = clipboard
-        .read_text()
-        .map(|t| Zeroizing::new(t) != secret)
-        .unwrap_or(false);
+    // On iOS, reading the clipboard shows a "pasted from" banner or asks
+    // the person to allow it, so it is cleared without looking.
+    let replaced = !cfg!(target_os = "ios")
+        && clipboard
+            .read_text()
+            .map(|t| Zeroizing::new(t) != secret)
+            .unwrap_or(false);
     if !replaced {
         // Best effort: nothing more can be done if this fails.
         let _ = clipboard.clear();

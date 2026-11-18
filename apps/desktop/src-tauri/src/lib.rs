@@ -31,7 +31,7 @@ mod importer;
 mod items;
 mod live;
 mod pending;
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 mod scanner;
 pub mod sharing_id;
 mod state;
@@ -55,9 +55,16 @@ fn unlock_keys(app: &tauri::AppHandle, dir: &std::path::Path) -> Box<dyn hello::
     hello::fingerprint(app.clone(), dir.to_path_buf())
 }
 
+/// What can unlock without the master password on this device: Touch ID
+/// or Face ID on Apple devices.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn unlock_keys(app: &tauri::AppHandle, _dir: &std::path::Path) -> Box<dyn hello::HelloKeys> {
+    hello::touch_id(app.clone())
+}
+
 /// What can unlock without the master password on this device: Windows
-/// Hello, or a fingerprint on Android.
-#[cfg(not(target_os = "android"))]
+/// Hello, or nothing yet on Linux.
+#[cfg(not(any(target_os = "android", target_os = "macos", target_os = "ios")))]
 fn unlock_keys(_app: &tauri::AppHandle, _dir: &std::path::Path) -> Box<dyn hello::HelloKeys> {
     hello::provider()
 }
@@ -176,13 +183,19 @@ mod mobile {
 /// account, so a second launch just brings the open window forward.
 #[cfg(desktop)]
 fn builder() -> tauri::Builder<tauri::Wry> {
-    tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-        if let Some(window) = app.get_webview_window("main") {
-            // Best effort: the window may be closing.
-            let _ = window.unminimize();
-            let _ = window.set_focus();
-        }
-    }))
+    let builder =
+        tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                // Best effort: the window may be closing.
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }));
+    // Touch ID. Only the Rust side calls it: the window has no permission
+    // for the plugin's commands.
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_plugin_biometric::init());
+    builder
 }
 
 /// The phone builder: Android runs one copy itself, and the clipboard
@@ -192,13 +205,13 @@ fn builder() -> tauri::Builder<tauri::Wry> {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_fs::init());
-    // Fingerprint unlock. Only the Rust side calls it: the window has no
-    // permission for the plugin's commands.
-    #[cfg(target_os = "android")]
+    // Fingerprint, Face ID and Touch ID unlock. Only the Rust side calls
+    // it: the window has no permission for the plugin's commands.
     let builder = builder
         .plugin(tauri_plugin_biometric::init())
-        .plugin(scanner::init())
-        .plugin(autofill::init());
+        .plugin(scanner::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(autofill::init());
     builder
 }
 

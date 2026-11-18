@@ -67,16 +67,29 @@ tauri-plugin-single-instance = "2.5.5"
 # The phone's clipboard, with copies marked sensitive so Android hides them
 # from the clipboard preview.
 tauri-plugin-clipboard-manager = "2.5.0"
-# Reads files picked through Android's document picker.
+# Reads files picked through the phone's document picker.
 tauri-plugin-fs = "2.7.1"
+# Scanning QR codes for one-time codes (ML Kit on Android, Apple's own
+# camera code on iOS).
+tauri-plugin-barcode-scanner = "2.5.3"
+
+[target.'cfg(any(target_os = "android", target_os = "macos", target_os = "ios"))'.dependencies]
+# Fingerprint, Touch ID and Face ID: whether they are set up, and on
+# Android the Keystore key that works only after a strong biometric check.
+tauri-plugin-biometric = "2.5.0"
 
 [target.'cfg(target_os = "android")'.dependencies]
 # Android's Keystore, which holds the key that encrypts stored entries.
 android-native-keyring-store = "1.0.0"
-# Fingerprint unlock: a Keystore key that works only after a strong
-# biometric check.
-tauri-plugin-biometric = "2.5.0"
-tauri-plugin-barcode-scanner = "2.5.3"
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+# Touch ID and Face ID unlock: a keychain item the system releases only
+# after a biometric check with the fingers or face enrolled now.
+security-framework = { version = "3.7", features = ["OSX_10_15"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+# The iPhone's keychain.
+apple-native-keyring-store = { version = "1.0.2", features = ["protected"] }
 
 [target.'cfg(windows)'.dependencies]
 # Where each browser finds the native messaging host.
