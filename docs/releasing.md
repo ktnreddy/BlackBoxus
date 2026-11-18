@@ -56,14 +56,17 @@ publishes it.
    extension zips from that commit, writes `SHA256SUMS.txt`, records build
    attestations (public repositories), and makes a draft release.
 6. Open the draft under **Releases**. Install at least the Windows and
-   Android files from it, check one checksum, then publish. It's marked a
-   pre-release while the version starts with `0.`.
+   Android files from it, check one checksum, then publish. It becomes
+   the "latest" release, which the website's download buttons point to.
+   (Pre-releases are skipped by those links, so test releases aren't
+   marked as one; the notes say it's a test release instead.)
 
 ## If something goes wrong
 
 - **Workflow failed:** fix it on `main`, delete the tag
   (`git push origin :refs/tags/v0.1.0` and `git tag -d v0.1.0`), and tag
   the new commit.
-- **A published release has a serious bug:** mark it a pre-release or
-  delete its files, and publish the next version. Never replace a file in
+- **A published release has a serious bug:** publish the next version
+  quickly, or delete the release so the buttons fall back to the one
+  before. Never replace a file in
   a published release: people may already have checked its checksum.

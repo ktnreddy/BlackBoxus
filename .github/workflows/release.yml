@@ -140,9 +140,9 @@ jobs:
           TAG: ${{ github.ref_name }}
           VERSION: ${{ needs.check.outputs.version }}
         run: |
-          prerelease=""
-          case "$VERSION" in 0.*) prerelease="--prerelease";; esac
-          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --draft --verify-tag $prerelease \
+          # Marked "latest", never a pre-release: the website's download
+          # buttons link to the latest release, which skips pre-releases.
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --draft --verify-tag --latest \
             --title "BlackBoxus $VERSION" --notes-file "docs/releases/$TAG.md" \
             "$RUNNER_TEMP"/out/*
           echo "Draft ready: review it under Releases, then publish." >> "$GITHUB_STEP_SUMMARY"

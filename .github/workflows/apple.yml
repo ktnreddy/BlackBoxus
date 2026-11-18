@@ -139,9 +139,29 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/shots"
           bundle=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist")
-          for device in "iPhone SE (3rd generation)" "iPhone 16" "iPhone 16 Pro Max" "iPad Air 11-inch (M2)"; do
-            id=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next((x['udid'] for r in d.values() for x in r if x['name']==sys.argv[1]), ''))" "$device")
-            if [ -z "$id" ]; then echo "::notice::No simulator called $device"; continue; fi
+          # The runner's simulators change with each Xcode, so pick by kind:
+          # the smallest iPhone (an SE, mini or "e" model), a standard iPhone,
+          # a Pro Max and an iPad, whatever their exact names.
+          xcrun simctl list devices available -j > "$RUNNER_TEMP/devices.json"
+          python3 - "$RUNNER_TEMP/devices.json" > "$RUNNER_TEMP/picked.txt" <<'PY'
+          import json, re, sys
+          devices = [d for r in json.load(open(sys.argv[1]))["devices"].values() for d in r]
+          names = {d["name"]: d["udid"] for d in devices}
+          phones = sorted(n for n in names if n.startswith("iPhone"))
+          def first(test):
+              return next((n for n in reversed(phones) if test(n)), None)
+          picks = [
+              first(lambda n: "SE" in n) or first(lambda n: "mini" in n)
+              or first(lambda n: re.fullmatch(r"iPhone \d+e", n) is not None),
+              first(lambda n: re.fullmatch(r"iPhone \d+", n) is not None),
+              first(lambda n: n.endswith("Pro Max")),
+              next((n for n in sorted(names, reverse=True) if n.startswith("iPad Air") or n.startswith("iPad (")), None),
+          ]
+          for n in dict.fromkeys(p for p in picks if p):
+              print(f"{names[n]}\t{n}")
+          PY
+          cat "$RUNNER_TEMP/picked.txt"
+          while IFS=$'\t' read -r id device; do
             xcrun simctl boot "$id" || true
             xcrun simctl bootstatus "$id" -b
             xcrun simctl install "$id" "$APP"
@@ -149,7 +169,7 @@ jobs:
             sleep 15
             xcrun simctl io "$id" screenshot "$RUNNER_TEMP/shots/${device// /-}.png"
             xcrun simctl shutdown "$id" || true
-          done
+          done < "$RUNNER_TEMP/picked.txt"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
