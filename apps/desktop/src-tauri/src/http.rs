@@ -56,6 +56,14 @@ impl Https {
     }
 }
 
+impl Https {
+    /// The server's base URL.
+    #[must_use]
+    pub fn base(&self) -> &str {
+        &self.base
+    }
+}
+
 impl Default for Https {
     fn default() -> Self {
         Self::new()

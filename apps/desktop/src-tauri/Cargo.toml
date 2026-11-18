@@ -47,6 +47,8 @@ tauri-plugin-single-instance = "2.5.5"
 thiserror = "2"
 # HTTPS with rustls and Mozilla's root certificates; no system TLS library.
 ureq = { version = "3.5.2", default-features = false, features = ["rustls"] }
+# The server's "something changed" hints, over the same rustls stack.
+tungstenite = { version = "0.30.0", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 url = "2.5.8"
 vault-core = { version = "0.0.1", path = "../../../crates/vault-core" }
 wire = { version = "0.0.1", path = "../../../crates/wire" }

@@ -134,6 +134,21 @@ The server runs on Cloudflare Workers (Free plan) with one D1 database, and is s
 - **CPU budget.** Each request must use under 10 ms of CPU. Measured in WebAssembly with SIMD enabled, the most expensive operations take about 1.5 ms (signing a tree head) and 1.8 ms (a full OPAQUE login, client and server together).
 - **Key log size.** The log's subtree hashes are kept in one D1 row of about 85 bytes per account, which D1's 2 MB row limit caps at roughly 23,000 accounts. Before then, the tree must move to one row per level.
 - **Clean-up.** A daily scheduled job deletes expired logins, enrolment transfers, sessions and rate limit windows.
+- **Notifications.** One SQLite-backed Durable Object per account (named by the account ID) holds its devices' WebSocket connections, using the hibernation API so idle connections cost nothing (12.12).
 
 This version serves the endpoints for accounts, login, sessions, key lookups and self-monitoring, device enrolment, vaults and sharing, recovery keys, password changes and trusted contacts. The extra unlock methods endpoints answer `not_implemented` until the clients that use them exist.
+
+## 12.12 Notifications
+
+`GET /v1/notifications` with a session, as a WebSocket upgrade, opens a connection on which the server sends short JSON hints when something the account can read changes:
+
+| Hint | Sent to | When |
+|---|---|---|
+| `{"t":"vault","id":<vault_id>}` | Every account with access to the vault | After a log entry is appended to it |
+| `{"t":"shares"}` | The recipient | After a vault key is shared with them |
+| `{"t":"emergency"}` | The other side of the grant | After a trusted contact asks for access, or the owner denies it |
+
+Hints carry no secrets and nothing the account could not already read, and they are not authenticated: a client only syncs sooner when one arrives, then checks everything as usual (Sections 8 and 9). A lost hint delays a sync; a forged one costs a sync. Clients MUST NOT treat a hint, or the absence of one, as evidence of anything. Clients ignore any hint they do not recognise, and messages over 4 KiB.
+
+The connection is tagged with a hash of its session token. The server closes it (code 4001) when that session signs out, when the account's password changes (every connection but the one making the change), when a trusted contact's grant is replaced or removed (emergency sessions' connections), and in any case an hour after it opened, so a connection never outlives its session by more than an hour. Clients reconnect, with backoff, and send a WebSocket ping at least every few minutes to keep idle connections open. Emergency sessions may connect; they only receive what their read access allows.
 

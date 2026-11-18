@@ -7,6 +7,7 @@
     errorMessage,
     isAppError,
     listItems,
+    onServerHint,
     lock,
     syncVaults,
     type AppStatus,
@@ -151,6 +152,24 @@
   }
 
   sync();
+
+  // Sync soon after the server says something changed, waiting for a
+  // quiet moment so a burst of changes (an import elsewhere) syncs once.
+  $effect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const soon = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (syncing || importOpen || editing) soon();
+        else sync();
+      }, 1500);
+    };
+    const stop = onServerHint(() => soon());
+    return () => {
+      clearTimeout(timer);
+      stop.then((unlisten) => unlisten()).catch(() => {});
+    };
+  });
 
   // Keep "synced n minutes ago" fresh, and lock when idle.
   $effect(() => {

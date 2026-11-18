@@ -17,6 +17,7 @@ pub mod http;
 mod import;
 mod importer;
 mod items;
+mod live;
 pub mod sharing_id;
 mod state;
 pub mod storage;

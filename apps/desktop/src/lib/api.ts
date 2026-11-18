@@ -403,6 +403,14 @@ export function onBrowserPairing(f: (request: PairingRequest | null) => void): P
   return listen<PairingRequest | null>("browser-pairing", (e) => f(e.payload));
 }
 
+/** What the server says changed. Only a hint: syncing checks everything. */
+export type ServerHint = { kind: "vault"; id: string } | { kind: "shares" } | { kind: "emergency" };
+
+/** Calls `f` for each hint the server sends while unlocked and online. */
+export function onServerHint(f: (hint: ServerHint) => void): Promise<() => void> {
+  return listen<ServerHint>("server-hint", (e) => f(e.payload));
+}
+
 /** A trusted-contact grant, from either side (spec section 11.4). */
 export interface GrantView {
   /** The other person's sharing ID. */

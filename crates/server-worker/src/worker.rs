@@ -102,7 +102,15 @@ fn api(env: &Env) -> Result<&'static Api, ApiError> {
 #[event(fetch)]
 async fn fetch(mut req: Request, env: Env, _ctx: Context) -> worker::Result<Response> {
     let now = Date::now().as_millis();
-    let (status, body, retry) = match handle(&mut req, &env, now).await {
+    let outcome = if req.path() == "/v1/notifications" {
+        match notifications(&req, &env, now).await {
+            Ok(upgraded) => return Ok(upgraded),
+            Err(e) => Err(e),
+        }
+    } else {
+        handle(&mut req, &env, now).await
+    };
+    let (status, body, retry) = match outcome {
         Ok(body) => (200, body, None),
         Err(e) => {
             let retry = match e {
@@ -157,6 +165,54 @@ async fn cleanup(db: &D1Database, now: u64) -> Result<(), ApiError> {
     db.batch(statements).await.map(|_| ()).map_err(storage)
 }
 
+/// `GET /v1/notifications` (spec section 12.12): an authenticated WebSocket
+/// upgrade, handed to the account's Durable Object.
+async fn notifications(req: &Request, env: &Env, now: u64) -> Result<Response, ApiError> {
+    let upgrade = req
+        .headers()
+        .get("Upgrade")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if req.method() != worker::Method::Get || !upgrade.eq_ignore_ascii_case("websocket") {
+        return Err(ApiError::NotFound);
+    }
+    let api = api(env)?;
+    let db = env.d1("DB").map_err(storage)?;
+    let session = authenticate(req, &db, api, now).await?;
+    crate::notify::connect(
+        env,
+        &session.account_id,
+        &crate::notify::session_tag(&session.token_hash),
+        session.read_only,
+    )
+    .await
+    .map_err(storage)
+}
+
+/// Tells the devices of every member of a vault that it changed.
+async fn notify_vault(env: &Env, db: &D1Database, vault_id: &VaultId) {
+    #[derive(Deserialize)]
+    struct Member {
+        account_id: String,
+    }
+    let Ok(rows) = all::<Member>(
+        db,
+        "SELECT account_id FROM vault_access WHERE vault_id = ?1 LIMIT 1000",
+        &[text(&b64(vault_id.as_bytes()))],
+    )
+    .await
+    else {
+        return;
+    };
+    let members: Vec<AccountId> = rows
+        .iter()
+        .filter_map(|r| unb64_array(&r.account_id).ok().map(AccountId::from_bytes))
+        .collect();
+    let message = format!(r#"{{"t":"vault","id":"{}"}}"#, b64(vault_id.as_bytes()));
+    crate::notify::send(env, &members, &message).await;
+}
+
 async fn handle(req: &mut Request, env: &Env, now: u64) -> Answer {
     let route = http::route(req.method().as_ref(), &req.path())?;
     if route == Route::NotImplemented {
@@ -184,6 +240,8 @@ async fn handle(req: &mut Request, env: &Env, now: u64) -> Answer {
                 &[text(&b64(&session.token_hash))],
             )
             .await?;
+            let tag = crate::notify::session_tag(&session.token_hash);
+            crate::notify::close(env, &session.account_id, crate::notify::Close::Only(&tag)).await;
             Ok("{}".into())
         }
         Route::KeySet => key_set(req, &db, api, now).await,
@@ -191,12 +249,16 @@ async fn handle(req: &mut Request, env: &Env, now: u64) -> Answer {
         Route::EnrolmentPut(id) => enrolment_put(req, &db, api, &id, now).await,
         Route::EnrolmentGet(id) => enrolment_get(&db, &id, &ip, now).await,
         Route::Vaults => vaults(req, &db, api, now).await,
-        Route::LogAppend(v) => log_append(req, &db, api, &v, now).await,
+        Route::LogAppend(v) => {
+            let answer = log_append(req, &db, api, &v, now).await?;
+            notify_vault(env, &db, &v).await;
+            Ok(answer)
+        }
         Route::LogRead(v) => log_read(req, &db, api, &v, now).await,
         Route::Items(v) => items(req, &db, api, &v, now).await,
         Route::VaultKeyPut(v) => vault_key_put(req, &db, api, &v, now).await,
         Route::VaultKeys(v) => vault_keys(req, &db, api, &v, now).await,
-        Route::SharePost => share_post(req, &db, api, now).await,
+        Route::SharePost => share_post(req, &db, api, env, now).await,
         Route::Shares => shares(req, &db, api, now).await,
         Route::RecoveryPut => recovery_put(req, &db, api, now).await,
         Route::RecoveryDelete => {
@@ -212,9 +274,13 @@ async fn handle(req: &mut Request, env: &Env, now: u64) -> Answer {
         }
         Route::RecoveryStart => recovery_start_handler(req, &db, &ip, now).await,
         Route::RecoveryFinish => recovery_finish_handler(req, &db, &ip, now).await,
-        Route::Password => password_change(req, &db, api, now).await,
+        Route::Password => password_change(req, &db, api, env, now).await,
         Route::OwnLeaves => own_leaves(req, &db, api, now).await,
-        Route::EmergencyPut => emergency_put(req, &db, api, now).await,
+        Route::EmergencyPut => {
+            let (answer, owner) = emergency_put(req, &db, api, now).await?;
+            crate::notify::close(env, &owner, crate::notify::Close::ReadOnly).await;
+            Ok(answer)
+        }
         Route::EmergencyDelete => {
             let session = authenticate(req, &db, api, now).await?;
             let me = text(&b64(session.account_id.as_bytes()));
@@ -231,11 +297,20 @@ async fn handle(req: &mut Request, env: &Env, now: u64) -> Answer {
                 )?,
             ];
             db.batch(statements).await.map_err(storage)?;
+            crate::notify::close(env, &session.account_id, crate::notify::Close::ReadOnly).await;
             Ok("{}".into())
         }
         Route::EmergencyStatus => emergency_status(req, &db, api, now).await,
-        Route::EmergencyRequest(owner) => emergency_request(req, &db, api, &owner, now).await,
-        Route::EmergencyDeny(contact) => emergency_deny(req, &db, api, &contact, now).await,
+        Route::EmergencyRequest(owner) => {
+            let answer = emergency_request(req, &db, api, &owner, now).await?;
+            crate::notify::send(env, &[owner], r#"{"t":"emergency"}"#).await;
+            Ok(answer)
+        }
+        Route::EmergencyDeny(contact) => {
+            let answer = emergency_deny(req, &db, api, &contact, now).await?;
+            crate::notify::send(env, &[contact], r#"{"t":"emergency"}"#).await;
+            Ok(answer)
+        }
         Route::EmergencyRelease(owner) => emergency_release(req, &db, api, &owner, now).await,
         Route::NotImplemented => Err(ApiError::NotImplemented),
     }
@@ -621,7 +696,13 @@ fn update_password(
     )
 }
 
-async fn password_change(req: &mut Request, db: &D1Database, api: &Api, now: u64) -> Answer {
+async fn password_change(
+    req: &mut Request,
+    db: &D1Database,
+    api: &Api,
+    env: &Env,
+    now: u64,
+) -> Answer {
     let session = authenticate(req, db, api, now).await?;
     require_fresh_session(&session, now)?;
     let r: PasswordChangeRequest = body(req).await?;
@@ -656,6 +737,8 @@ async fn password_change(req: &mut Request, db: &D1Database, api: &Api, now: u64
         )?,
     ];
     db.batch(statements).await.map_err(storage)?;
+    let tag = crate::notify::session_tag(&session.token_hash);
+    crate::notify::close(env, &session.account_id, crate::notify::Close::AllBut(&tag)).await;
     Ok("{}".into())
 }
 
@@ -710,7 +793,12 @@ async fn emergency_of(
     .await
 }
 
-async fn emergency_put(req: &mut Request, db: &D1Database, api: &Api, now: u64) -> Answer {
+async fn emergency_put(
+    req: &mut Request,
+    db: &D1Database,
+    api: &Api,
+    now: u64,
+) -> Result<(String, AccountId), ApiError> {
     let session = authenticate(req, db, api, now).await?;
     require_fresh_session(&session, now)?;
     let r: EmergencyPutRequest = body(req).await?;
@@ -743,7 +831,7 @@ async fn emergency_put(req: &mut Request, db: &D1Database, api: &Api, now: u64) 
         )?,
     ];
     db.batch(statements).await.map_err(storage)?;
-    Ok("{}".into())
+    Ok(("{}".into(), session.account_id))
 }
 
 async fn emergency_status(req: &mut Request, db: &D1Database, api: &Api, now: u64) -> Answer {
@@ -1373,7 +1461,7 @@ async fn vault_keys(
     })
 }
 
-async fn share_post(req: &mut Request, db: &D1Database, api: &Api, now: u64) -> Answer {
+async fn share_post(req: &mut Request, db: &D1Database, api: &Api, env: &Env, now: u64) -> Answer {
     let session = authenticate(req, db, api, now).await?;
     let r: SharePostRequest = body(req).await?;
     let share = unb64(&r.share, VAULT_SHARE_LEN)?;
@@ -1398,6 +1486,7 @@ async fn share_post(req: &mut Request, db: &D1Database, api: &Api, now: u64) -> 
         ],
     )?];
     db.batch(statements).await.map_err(storage)?;
+    crate::notify::send(env, &[info.recipient], r#"{"t":"shares"}"#).await;
     Ok("{}".into())
 }
 

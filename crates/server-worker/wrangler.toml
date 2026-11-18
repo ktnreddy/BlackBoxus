@@ -21,6 +21,17 @@ database_name = "blackboxus"
 database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "migrations"
 
+# One Durable Object per account holds its devices' WebSocket connections
+# for "something changed" hints (spec section 12.12). SQLite-backed classes
+# are what the Free plan offers.
+[[durable_objects.bindings]]
+name = "NOTIFIER"
+class_name = "Notifier"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Notifier"]
+
 [triggers]
 # Daily cleanup of expired logins, transfers, sessions and rate limits.
 crons = ["17 3 * * *"]

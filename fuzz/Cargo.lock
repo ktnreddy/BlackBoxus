@@ -1492,6 +1492,7 @@ dependencies = [
  "server-core",
  "sha2 0.11.1",
  "vault-core",
+ "wasm-bindgen",
  "wire",
  "worker",
  "zeroize",

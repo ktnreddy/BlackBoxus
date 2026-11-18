@@ -25,6 +25,8 @@ pub struct Session {
     pub pending_import: Option<PendingImport>,
     /// Another account opened as its trusted contact, read-only.
     pub emergency: Option<crate::trusted::EmergencyAccess>,
+    /// The connection listening for the server's hints.
+    pub live: Option<crate::live::Live>,
 }
 
 /// The account set up on this computer, as shown in the window.
@@ -162,6 +164,7 @@ impl AppState {
             vaults: Vaults::new(VaultFiles::new(self.storage.vault_dir()), log_key()?),
             pending_import: None,
             emergency: None,
+            live: None,
         })
     }
 

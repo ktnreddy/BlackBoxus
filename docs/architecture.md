@@ -47,7 +47,7 @@ What the server can still see, and the known limits of these guarantees, are lis
 | iOS app | Swift, SwiftUI, `vault-core` via UniFFI | Trusted device |
 | API | Rust on Cloudflare Workers | Untrusted |
 | Database | Cloudflare D1 (SQLite) | Untrusted; ciphertext and public data only |
-| Sync coordination | Cloudflare Durable Objects (one per vault), WebSocket "vault changed" notifications (planned) | Untrusted |
+| Sync coordination | D1 transactions; one Cloudflare Durable Object per account for WebSocket "something changed" hints | Untrusted |
 | Website | Cloudflare Pages | Information only; there is no web vault |
 
 There is deliberately no browser-served web vault. A web vault downloads its code from the server, so a compromised server could ship code that steals passwords.
@@ -55,7 +55,7 @@ There is deliberately no browser-served web vault. A web vault downloads its cod
 ## Sync
 
 1. A device edits an item, re-encrypts it, appends a signed entry to the vault log, and uploads both.
-2. The vault's Durable Object accepts the write only if it extends the current head, then notifies other devices that the vault changed.
+2. The server accepts the write only if it extends the current head, then sends every member's devices a hint that the vault changed (spec section 12.12).
 3. Other devices fetch new entries, verify the signature chain from their last known head, and decrypt.
 4. Conflicting edits to the same item keep both versions for the user to resolve.
 5. A history that is older than, or does not extend, the cached head triggers a tamper alert.

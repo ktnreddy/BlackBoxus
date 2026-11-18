@@ -59,6 +59,12 @@ its first sync. A sealed copy of each vault is saved after every sync and
 loaded on the next one, so a server that rolls a vault back or forks it is
 caught.
 
+- **Live updates:** while unlocked and online, the app keeps a WebSocket
+  connection to the server, which sends a short hint when a vault changes,
+  a vault is shared with the account or a trusted contact asks for access
+  (spec section 12.12). The app then syncs within a couple of seconds,
+  checking everything as usual; hints carry no secrets. The connection
+  closes when the app locks and is renewed at least hourly.
 - **More vaults:** "New vault" makes another vault, to keep work and home
   apart or to share one set of items. Each vault's name is kept in an
   encrypted details item (spec section 6.3), so the server never sees it,

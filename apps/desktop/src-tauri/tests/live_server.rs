@@ -737,3 +737,80 @@ fn naming_a_trusted_contact() -> Result<(), AppError> {
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
 }
+
+#[test]
+#[ignore = "needs a running server and BLACKBOXUS_LOG_KEY"]
+fn hints_arrive_when_a_vault_changes() -> Result<(), AppError> {
+    use std::time::{Duration, Instant};
+
+    use blackboxus_desktop::http::Transport;
+    use blackboxus_desktop::vaults::{VaultFiles, Vaults, log_key};
+    use tungstenite::client::IntoClientRequest;
+    use tungstenite::stream::MaybeTlsStream;
+
+    let transport = Https::new();
+    let server = ServerIdentity::new(ORIGIN)?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let email = format!("hints-{nonce}@example.com");
+    let (listener, _, secret_key, _) = create_account(&transport, &server, &email, PASSWORD)?;
+    let (writer, _) = sign_in(&transport, &server, &email, &secret_key, PASSWORD)?;
+
+    let url = transport.base().replace("http://", "ws://") + "/v1/notifications";
+    let connect = |authorization: Option<String>| {
+        let mut request = url
+            .as_str()
+            .into_client_request()
+            .map_err(|_| AppError::Offline)?;
+        if let Some(a) = authorization {
+            request
+                .headers_mut()
+                .insert("Authorization", a.parse().map_err(|_| AppError::Offline)?);
+        }
+        tungstenite::connect(request)
+            .map(|(ws, _)| ws)
+            .map_err(|e| match e {
+                tungstenite::Error::Http(r) if r.status().as_u16() == 401 => AppError::SignedOut,
+                _ => AppError::Offline,
+            })
+    };
+    // Without a session nothing connects.
+    assert_eq!(connect(None).err(), Some(AppError::SignedOut));
+    let mut ws = connect(Some(listener.session.authorization()))?;
+    if let MaybeTlsStream::Plain(s) = ws.get_ref() {
+        let _ = s.set_read_timeout(Some(Duration::from_secs(10)));
+    }
+
+    // Another device makes the account's first vault: a hint names it.
+    let dir = std::env::temp_dir().join(format!("blackboxus-live-{nonce}"));
+    let mut vaults = Vaults::new(VaultFiles::new(dir.clone()), log_key()?);
+    vaults.sync(&transport, &writer)?;
+    let vault = vaults
+        .summaries(&writer)
+        .first()
+        .map(|v| v.id.clone())
+        .unwrap_or_default();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut seen = false;
+    while Instant::now() < deadline && !seen {
+        if let Ok(tungstenite::Message::Text(t)) = ws.read() {
+            seen = t.as_str() == format!(r#"{{"t":"vault","id":"{vault}"}}"#);
+        }
+    }
+    assert!(seen, "no hint for the new vault");
+
+    // Signing out of the listening session closes its connection.
+    client_core::vaults::written(&transport.send(&listener.session.logout_request())?)?;
+    let closed = loop {
+        match ws.read() {
+            Ok(tungstenite::Message::Close(_)) | Err(_) => break true,
+            Ok(_) if Instant::now() > deadline + Duration::from_secs(10) => break false,
+            Ok(_) => {}
+        }
+    };
+    assert!(closed, "connection stayed open after signing out");
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}

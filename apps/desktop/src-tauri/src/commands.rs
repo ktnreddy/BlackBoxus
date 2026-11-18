@@ -261,6 +261,7 @@ pub(crate) struct Synced {
 /// lists this computer's copies instead, read-only.
 #[tauri::command]
 pub(crate) async fn sync_vaults(app: AppHandle) -> Result<Synced, AppError> {
+    let handle = app.clone();
     blocking(app, move |state| {
         let offline =
             state.with_session(|s| match s.vaults.sync(&state.transport, &s.unlocked) {
@@ -273,6 +274,15 @@ pub(crate) async fn sync_vaults(app: AppHandle) -> Result<Synced, AppError> {
             })?;
         state.set_offline(offline);
         state.with_session(|s| {
+            // Listen for changes while online, starting again after the
+            // server refused an expired session and a new one was made.
+            if !offline && s.live.as_ref().is_none_or(crate::live::Live::finished) {
+                s.live = crate::live::Live::start(
+                    handle.clone(),
+                    state.transport.base(),
+                    s.unlocked.session.authorization(),
+                );
+            }
             let unknown_keys = if offline {
                 false
             } else {
