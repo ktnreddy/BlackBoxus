@@ -123,16 +123,15 @@ jobs:
       # the repository until the app is signed and shipped.
       - name: Generate the Xcode project
         run: npx tauri ios init --ci
+      # Through the Tauri CLI: Xcode's build phase calls back into it to
+      # build the Rust code, so plain xcodebuild can't build the app.
       - name: Build for the Simulator
         run: |
-          project=$(ls -d src-tauri/gen/apple/*.xcodeproj | head -1)
-          scheme=$(xcodebuild -list -json -project "$project" | python3 -c 'import json,sys; s=json.load(sys.stdin)["project"]["schemes"]; print(next(x for x in s if x.endswith("_iOS")))')
-          echo "Building $scheme from $project"
-          xcodebuild -project "$project" -scheme "$scheme" -configuration Debug \
-            -sdk iphonesimulator -arch arm64 -derivedDataPath "$RUNNER_TEMP/dd" \
-            CODE_SIGNING_ALLOWED=NO build | tail -40
-          app=$(ls -d "$RUNNER_TEMP"/dd/Build/Products/Debug-iphonesimulator/*.app | head -1)
-          echo "APP=$app" >> "$GITHUB_ENV"
+          npx tauri ios build --ci --debug --target aarch64-sim --no-sign
+          app=$(find src-tauri/gen/apple/build -maxdepth 3 -name '*.app' -type d | head -1)
+          [ -n "$app" ] || { echo "::error::No .app was built"; exit 1; }
+          echo "Built $app"
+          echo "APP=$PWD/$app" >> "$GITHUB_ENV"
       # Starts the app on a few devices and takes a screenshot of each, to
       # check the screens around the notch, Dynamic Island and home
       # indicator, and on the iPad.
