@@ -3,6 +3,10 @@ name: Release
 # Makes a draft GitHub release from a version tag, for example v0.1.0.
 # See docs/releasing.md for the whole process.
 #
+# Start it by pushing the tag, or without Git: Actions > Release > Run
+# workflow on main, typing the tag. Then the tag is made on main's latest
+# commit, by the person who pressed the button, once the checks pass.
+#
 # Nothing is published by this workflow: it builds everything from the
 # tagged commit, writes checksums, and leaves a draft for a person to read
 # and publish. It refuses to start unless the tag matches the app's
@@ -11,12 +15,18 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Version tag to release, for example v0.1.0
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -32,6 +42,7 @@ jobs:
       actions: read
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -40,8 +51,14 @@ jobs:
       - name: The tag matches the app's version
         id: version
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+          EVENT: ${{ github.event_name }}
         run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::Run it on main"; exit 1; }
+            [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::$TAG isn't a version tag like v0.1.0"; exit 1; }
+            ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "::error::$TAG already exists"; exit 1; }
+          fi
           version=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)
           for f in apps/desktop/package.json apps/extension/package.json apps/extension/static/manifest.json; do
             [ "$(jq -r .version "$f")" = "$version" ] || { echo "::error::$f has another version than $version"; exit 1; }
@@ -50,6 +67,7 @@ jobs:
           [ "$TAG" = "v$version" ] || { echo "::error::Tag $TAG doesn't match the app's version $version"; exit 1; }
           [ -f "docs/releases/v$version.md" ] || { echo "::error::No release notes in docs/releases/v$version.md"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
       - name: The commit is on main
         run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - name: CI passed on it
@@ -58,6 +76,32 @@ jobs:
         run: |
           result=$(gh run list -R "$GITHUB_REPOSITORY" --workflow CI --commit "$GITHUB_SHA" --status success --json databaseId --jq length)
           [ "$result" -gt 0 ] || { echo "::error::CI hasn't passed on $GITHUB_SHA"; exit 1; }
+
+  # Only when started with the button: makes the annotated tag on the
+  # checked commit, named after the person who started the run.
+  tag:
+    name: Make the tag
+    needs: check
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Tag the commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.check.outputs.tag }}
+          VERSION: ${{ needs.check.outputs.version }}
+          ACTOR: ${{ github.actor }}
+          ACTOR_ID: ${{ github.actor_id }}
+        run: |
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          object=$(gh api -X POST "repos/$GITHUB_REPOSITORY/git/tags" -f tag="$TAG" \
+            -f message="BlackBoxus $VERSION" -f object="$GITHUB_SHA" -f type=commit \
+            -f "tagger[name]=$ACTOR" -f "tagger[email]=$ACTOR_ID+$ACTOR@users.noreply.github.com" \
+            -f "tagger[date]=$now" --jq .sha)
+          gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$object" --jq .ref
 
   apps:
     name: Apps
@@ -101,7 +145,9 @@ jobs:
 
   publish:
     name: Draft the release
-    needs: [check, apps, extension]
+    needs: [check, tag, apps, extension]
+    # The tag job is skipped when the run started from a pushed tag.
+    if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -137,7 +183,7 @@ jobs:
       - name: Draft the release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.check.outputs.tag }}
           VERSION: ${{ needs.check.outputs.version }}
         run: |
           # Marked "latest", never a pre-release: the website's download

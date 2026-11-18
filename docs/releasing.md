@@ -50,6 +50,11 @@ publishes it.
    git push origin v0.1.0
    ```
 
+   Or without Git: open **Actions › Release › Run workflow**, keep the
+   branch on `main`, type the tag (`v0.1.0`) and run it. The workflow
+   makes the tag itself on `main`'s latest commit, in the name of whoever
+   pressed the button, after the checks below pass.
+
 5. The Release workflow checks that the tag matches every version, that
    the commit is on `main` and that CI passed on it. Then it builds the
    Windows installer, the Linux packages, the signed Android APK and the
