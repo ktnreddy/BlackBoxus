@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "BlackBoxus",
   "description": "Fill passwords from the BlackBoxus app on this computer.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "minimum_chrome_version": "120",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAv2sgRNOg6mOC64iXILGHpqmnsGWGnRFujoZhAJMwTKyFh725AdxBbQO/jWGDNSU8AE2IKR3+0FnHoqg2L4bk7ciQj3qaYcjs4n1aXTNlpGdibIRx6XnZsZV+rlbwfe2fUf5Ew5ZJbQ6bdrGhmv3zSiQNlLuGzIGhUMvCnDV9anwqCjYxFd6z+4jjt6M0RhLe+tSKEqKDtTNZAtMBhjMTy9qUdIZltoqLuXqQ9dO/VvBFm1x/va26iuc+LvDL2LJrkwG5FEliMIxBtO3O2QHp0JCxJEtM6WfW5eSw5O3meHBdiSfwYDUn4SPYKn8JPpybrN+fZn4RFzMzeCfzT6vBwwIDAQAB",
   "permissions": ["nativeMessaging", "activeTab", "scripting"],

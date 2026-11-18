@@ -1,0 +1,49 @@
+name: Something went wrong
+description: A bug, a crash, or something that doesn't work as you expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing BlackBoxus.
+
+        **Never paste a password, your master password, your Secret Key, a recovery key or anything from your Emergency Kit here.** This page is public. Screenshots are welcome, but check they show none of those.
+
+        If the problem could put someone's passwords at risk, report it privately instead: **Report a security problem privately** on the previous page.
+  - type: dropdown
+    id: app
+    attributes:
+      label: Where
+      options:
+        - Windows app
+        - Android app
+        - Linux app
+        - Browser extension
+        - Website
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Shown at the bottom of Settings, for example "BlackBoxus 0.1.0". Add your Windows or Android version too.
+      placeholder: BlackBoxus 0.1.0 on Windows 11
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, step by step, and what happened.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Screenshots, or the exact text of an error message.

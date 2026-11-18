@@ -64,6 +64,8 @@ docs/
   architecture.md
   deployment.md
   desktop.md
+  releasing.md   How a release is built, checked and published
+  releases/      Notes for each release
   spec/          Protocol specification
 ```
 

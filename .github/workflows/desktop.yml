@@ -5,6 +5,9 @@ name: Desktop
 # on the run's page for 14 days.
 # The installer is not code-signed yet, so Windows SmartScreen warns
 # before running it.
+#
+# The Release workflow runs this too, with `release: true`: then the APK
+# must be signed with the real key, never a throwaway one.
 
 on:
   push:
@@ -17,12 +20,18 @@ on:
       - "Cargo.lock"
       - ".github/workflows/desktop.yml"
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release:
+        description: Building a release
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: desktop-${{ github.ref }}
+  group: ${{ github.workflow }}-desktop-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -147,8 +156,13 @@ jobs:
         env:
           ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          RELEASE: ${{ inputs.release }}
         run: |
           key="$RUNNER_TEMP/blackboxus-upload.jks"
+          if [ "$RELEASE" = "true" ] && [ -z "$ANDROID_KEY_BASE64" ]; then
+            echo "::error::A release needs the ANDROID_KEY_BASE64 and ANDROID_KEY_PASSWORD secrets (docs/releasing.md)."
+            exit 1
+          fi
           if [ -n "$ANDROID_KEY_BASE64" ]; then
             printf '%s' "$ANDROID_KEY_BASE64" | base64 -d > "$key"
             password="$ANDROID_KEY_PASSWORD"

@@ -21,7 +21,7 @@ path = "src/main.rs"
 tauri-build = { version = "2.7.4", features = ["isolation"] }
 
 [dependencies]
-client-core = { version = "0.0.1", path = "../../../crates/client-core" }
+client-core = { version = "0.1.0", path = "../../../crates/client-core" }
 csv = "1.4.0"
 getrandom = "0.4.3"
 hkdf = "0.13.0"
@@ -44,8 +44,8 @@ ureq = { version = "3.5.2", default-features = false, features = ["rustls"] }
 # The server's "something changed" hints, over the same rustls stack.
 url = "2.5.8"
 tungstenite = { version = "0.30.0", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
-vault-core = { version = "0.0.1", path = "../../../crates/vault-core" }
-wire = { version = "0.0.1", path = "../../../crates/wire" }
+vault-core = { version = "0.1.0", path = "../../../crates/vault-core" }
+wire = { version = "0.1.0", path = "../../../crates/wire" }
 zeroize = { version = "1.9", features = ["serde"] }
 zxcvbn = "3.1.1"
 

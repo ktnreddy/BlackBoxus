@@ -4,6 +4,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import assert from "node:assert/strict";
 
+const PROJECT = "https://github.com/ktnreddy/BlackBoxus/";
 const pages = readdirSync("dist").filter((f) => f.endsWith(".html"));
 assert.ok(pages.length >= 5, "pages are missing");
 for (const page of pages) {
@@ -15,6 +16,9 @@ for (const page of pages) {
   assert.match(html, /<title>[^<]+<\/title>/, `${page}: no title`);
   assert.match(html, /<html lang="en">/, `${page}: no language`);
   for (const [, url] of html.matchAll(/(?:href|src)="([^"]+)"/g)) {
+    // The one other site linked to: this project on GitHub, for downloads
+    // and bug reports. Never loaded from (no src, no stylesheets).
+    if (url.startsWith(PROJECT) && html.includes(`href="${url}"`) && !html.includes(`src="${url}"`)) continue;
     if (/^https?:\/\//.test(url)) {
       assert.fail(`${page}: loads or links to another site: ${url}`);
     }

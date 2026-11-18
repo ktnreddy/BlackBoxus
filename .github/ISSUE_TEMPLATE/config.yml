@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem privately
+    url: https://github.com/ktnreddy/BlackBoxus/security/advisories/new
+    about: Anything that could put someone's passwords at risk. Please don't open a public issue for these.

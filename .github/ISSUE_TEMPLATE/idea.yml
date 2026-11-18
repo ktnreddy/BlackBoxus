@@ -1,0 +1,11 @@
+name: An idea
+description: Something that would make BlackBoxus better or easier to use.
+labels: [idea]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+      description: What you'd like, and what it would help you do.
+    validations:
+      required: true

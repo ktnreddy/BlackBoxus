@@ -456,12 +456,17 @@
     {/if}
 
     <div class="row actions">
+      <span class="small version">BlackBoxus {status.version}</span>
       <button type="button" class="btn primary" onclick={onclose}>Done</button>
     </div>
   </div>
 </div>
 
 <style>
+  .version {
+    margin-right: auto;
+    color: var(--muted);
+  }
   .backdrop {
     position: fixed;
     inset: 0;
