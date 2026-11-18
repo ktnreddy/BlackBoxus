@@ -39,14 +39,15 @@ All cryptography lives in one Rust library, `vault-core`, shared by every app. T
 | Website | Static site | Cloudflare Pages |
 | Desktop app | Tauri 2 + Svelte 5 + TypeScript | Windows and Linux; macOS later |
 | Browser extension | TypeScript + WebAssembly | Firefox, Chrome |
-| Android app | Kotlin + Jetpack Compose | Android |
+| Android app | The desktop app, built for phones by Tauri 2 | Android 9 and later |
 | iOS app | Swift + SwiftUI | iPhone, iPad (planned) |
 
 ## Repository layout
 
 ```
 apps/
-  desktop/       The desktop app: Svelte screens in src/, Rust in src-tauri/
+  desktop/       The app for Windows, Linux and Android: Svelte screens in src/,
+                 Rust in src-tauri/, the Android project in src-tauri/gen/android/
   extension/     The browser extension for Chrome, Edge, Brave and Firefox
   website/       The website, plain HTML and CSS on Cloudflare Pages
 crates/
@@ -57,6 +58,7 @@ crates/
   server-worker/ The server on Cloudflare Workers and D1
 fuzz/            Fuzz targets for every parser of untrusted data
 docs/
+  android.md
   architecture.md
   deployment.md
   desktop.md
@@ -73,7 +75,7 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
-The desktop app also needs Node.js 22; see [`docs/desktop.md`](docs/desktop.md).
+The desktop app also needs Node.js 22; see [`docs/desktop.md`](docs/desktop.md). For the Android app, see [`docs/android.md`](docs/android.md).
 
 Fuzz testing uses [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz):
 

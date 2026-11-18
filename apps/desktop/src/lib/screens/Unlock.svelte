@@ -63,7 +63,7 @@
 <main class="glow page">
   <section class="stack hero" aria-label="Unlock">
     <h1 class="display">Welcome back.<br />Your vaults are <span class="hi">sealed.</span></h1>
-    <p class="lede">Enter your master password to open them on this computer.</p>
+    <p class="lede">Enter your master password to open them on this device.</p>
     <form class="form" onsubmit={submit}>
       <PasswordField
         id="master-password"

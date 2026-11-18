@@ -9,11 +9,11 @@ use vault_core::Error as CryptoError;
 /// carries secrets or server details.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum AppError {
-    /// There is no account on this computer yet.
-    #[error("There is no account on this computer yet.")]
+    /// There is no account on this device yet.
+    #[error("There is no account on this device yet.")]
     NoAccount,
-    /// An account is already set up on this computer.
-    #[error("An account is already set up on this computer.")]
+    /// An account is already set up on this device.
+    #[error("An account is already set up on this device.")]
     AccountExists,
     /// The master password field was empty.
     #[error("Enter your master password.")]
@@ -78,11 +78,11 @@ pub enum AppError {
          If this keeps happening, something may be tampering with your connection."
     )]
     Tampered,
-    /// The Secret Key is missing from this computer's credential store.
-    #[error("This computer no longer has your Secret Key. Sign in again with your Emergency Kit.")]
+    /// The Secret Key is missing from this device's credential store.
+    #[error("This device no longer has your Secret Key. Sign in again with your Emergency Kit.")]
     SecretKeyMissing,
-    /// Reading or writing this computer's storage failed.
-    #[error("BlackBoxus couldn't save to this computer. Check there is free space and try again.")]
+    /// Reading or writing this device's storage failed.
+    #[error("BlackBoxus couldn't save to this device. Check there is free space and try again.")]
     Storage,
     /// This build does not know the key transparency log's key.
     #[error("This version of BlackBoxus isn't set up for this server yet. Update the app.")]
@@ -126,28 +126,81 @@ pub enum AppError {
     /// The import file is too large.
     #[error("That file is too large to import (the limit is 20 MB and 10,000 entries).")]
     ImportTooLarge,
+    /// The camera may not be used.
+    #[error(
+        "BlackBoxus needs the camera to scan the code. Allow it in your phone's Settings, or paste the setup key instead."
+    )]
+    CameraDenied,
+    /// The scan was cancelled.
+    #[error("Scan cancelled.")]
+    ScanCancelled,
+    /// Everything in the file is already in the vault.
+    #[error("Everything in this file is already in this vault, so there's nothing new to import.")]
+    NothingNew,
     /// An import is already running.
     #[error("An import is already running.")]
     ImportRunning,
-    /// Windows Hello is not set up or not available.
-    #[error(
-        "Windows Hello isn't available. Set it up in Windows Settings, under Accounts, Sign-in options."
+    /// Windows Hello (or, on a phone, fingerprint unlock) is not set up or
+    /// not available.
+    #[cfg_attr(
+        desktop,
+        error(
+            "Windows Hello isn't available. Set it up in Windows Settings, under Accounts, Sign-in options."
+        )
+    )]
+    #[cfg_attr(
+        mobile,
+        error(
+            "Fingerprint unlock isn't available. Add a fingerprint or face in your phone's Settings, under Security."
+        )
     )]
     HelloUnavailable,
-    /// The user cancelled Windows Hello.
-    #[error("Windows Hello was cancelled.")]
+    /// The user cancelled the check.
+    #[cfg_attr(desktop, error("Windows Hello was cancelled."))]
+    #[cfg_attr(mobile, error("Fingerprint check cancelled."))]
     HelloCancelled,
-    /// The Hello key is gone, for example after a Windows reset.
+    /// Too many failed tries: the phone has locked fingerprints for now.
     #[error(
-        "Windows Hello unlock needs setting up again. Unlock with your master password, then turn it back on."
+        "Too many tries, so your phone has paused fingerprints for a while. Use your master password, or try again later."
+    )]
+    HelloLockedOut,
+    /// The key is gone: on Windows after a reset, on a phone after a new
+    /// fingerprint or face was added.
+    #[cfg_attr(
+        desktop,
+        error(
+            "Windows Hello unlock needs setting up again. Unlock with your master password, then turn it back on."
+        )
+    )]
+    #[cfg_attr(
+        mobile,
+        error(
+            "Your phone's fingerprints or face changed, so fingerprint unlock needs setting up again. Unlock with your master password, then turn it back on."
+        )
     )]
     HelloMissing,
     /// Hello unlock is not turned on.
-    #[error("Windows Hello unlock is off. Unlock with your master password.")]
+    #[cfg_attr(
+        desktop,
+        error("Windows Hello unlock is off. Unlock with your master password.")
+    )]
+    #[cfg_attr(
+        mobile,
+        error("Fingerprint unlock is off. Unlock with your master password.")
+    )]
     HelloOff,
     /// It has been too long since the master password was used.
-    #[error(
-        "It's been 14 days, so enter your master password this time. Windows Hello works again after that."
+    #[cfg_attr(
+        desktop,
+        error(
+            "It's been 14 days, so enter your master password this time. Windows Hello works again after that."
+        )
+    )]
+    #[cfg_attr(
+        mobile,
+        error(
+            "It's been 14 days, so enter your master password this time. Your fingerprint works again after that."
+        )
     )]
     PasswordNeeded,
     /// A change was attempted while offline.
@@ -155,6 +208,11 @@ pub enum AppError {
         "You're offline, so your vaults are read-only. Changes can be made once you're connected again."
     )]
     ReadOnlyOffline,
+    /// Too many changes are waiting to be sent.
+    #[error(
+        "Too many changes are waiting to be sent. Connect to the internet so they can sync first."
+    )]
+    TooManyChanges,
     /// A one-time code secret could not be read.
     #[error(
         "That isn't a one-time code secret. Paste the setup key or otpauth:// link the site shows."
@@ -219,14 +277,19 @@ impl AppError {
             Self::InvalidSetting => "invalid_setting",
             Self::InvalidTotp => "invalid_totp",
             Self::ReadOnlyOffline => "read_only_offline",
+            Self::TooManyChanges => "too_many_changes",
             Self::HelloUnavailable => "hello_unavailable",
             Self::HelloCancelled => "hello_cancelled",
+            Self::HelloLockedOut => "hello_locked_out",
             Self::HelloMissing => "hello_missing",
             Self::HelloOff => "hello_off",
             Self::PasswordNeeded => "password_needed",
             Self::ImportUnreadable => "import_unreadable",
             Self::ImportTooLarge => "import_too_large",
             Self::ImportRunning => "import_running",
+            Self::NothingNew => "nothing_new",
+            Self::CameraDenied => "camera_denied",
+            Self::ScanCancelled => "scan_cancelled",
             Self::InvalidSharingId => "invalid_sharing_id",
             Self::NotVerified => "not_verified",
             Self::AlreadyMember => "already_member",

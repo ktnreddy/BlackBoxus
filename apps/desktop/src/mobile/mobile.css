@@ -1,0 +1,683 @@
+/* Shared styles for the phone screens. Big touch targets (at least 48px),
+   one column, and sheets instead of dialogs. Tokens come from app.css. */
+
+.m-root {
+  /* DM Sans with its optical sizes, as in the designs. */
+  --font: "DM Sans Variable", system-ui, sans-serif;
+  /* The designs leave 32px for the status bar and 12px for the gesture
+     bar; taller system bars push the screens down or up by the rest. */
+  --sb: max(0px, calc(env(safe-area-inset-top) - 32px));
+  --bb: max(0px, calc(env(safe-area-inset-bottom) - 12px));
+  font-family: var(--font);
+  line-height: normal;
+  height: 100%;
+  font-size: 16px;
+  -webkit-tap-highlight-color: transparent;
+  /* On tablets and wide windows the app keeps a phone-width column in the
+     middle, so lines stay readable. The transform makes this column the
+     frame for full-screen pages and sheets too. */
+  max-width: 640px;
+  margin: 0 auto;
+  position: relative;
+  transform: translateZ(0);
+  overflow: hidden;
+  background: #0b0b0c;
+}
+
+.m-title {
+  margin: 0 4px;
+  font-size: 30px;
+  line-height: 1.15;
+  font-weight: 300;
+  letter-spacing: -0.02em;
+}
+.m-display {
+  margin: 0;
+  font-size: 38px;
+  line-height: 1.08;
+  font-weight: 300;
+  letter-spacing: -0.03em;
+}
+.m-display .hi {
+  color: var(--accent);
+}
+.m-lede {
+  margin: 0 4px;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--soft);
+}
+.m-small {
+  font-size: 13px;
+  color: var(--muted);
+}
+.m-section {
+  margin: 10px 8px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* Buttons */
+.m-btn {
+  width: 100%;
+  min-height: 56px;
+  padding: 0 20px;
+  border-radius: 28px;
+  border: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 17px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.m-btn:active:not(:disabled) {
+  background: var(--accent-hover);
+}
+.m-btn:disabled {
+  opacity: 0.45;
+}
+.m-btn.ghost {
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-weight: 500;
+  font-size: 16px;
+  min-height: 52px;
+}
+.m-btn.danger {
+  background: none;
+  border: 1px solid rgba(252, 165, 165, 0.4);
+  color: #fca5a5;
+  font-weight: 500;
+  font-size: 16px;
+  min-height: 52px;
+}
+.m-btn.small {
+  width: auto;
+  min-height: 44px;
+  font-size: 15px;
+  padding: 0 18px;
+}
+.m-link {
+  border: 0;
+  background: none;
+  color: var(--accent-soft);
+  font-size: 15px;
+  font-weight: 500;
+  min-height: 44px;
+  padding: 0 4px;
+}
+.m-icon {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: 22px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  display: grid;
+  place-items: center;
+}
+.m-icon:active {
+  background: var(--panel-2);
+}
+.m-icon.filled {
+  background: var(--panel-2);
+}
+
+/* Fields */
+.m-label {
+  display: block;
+  padding-left: 4px;
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.m-field {
+  display: flex;
+  align-items: center;
+  height: 56px;
+  padding: 0 6px 0 16px;
+  border-radius: 16px;
+  background: #151517;
+  border: 1px solid #2a2a2e;
+}
+.m-field:focus-within {
+  border-color: #ff6a1a;
+  box-shadow: inset 0 0 0 1px #ff6a1a;
+}
+.m-field input,
+.m-field textarea {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  outline: none;
+  color: #f4f4f5;
+  font: 400 17px "DM Sans Variable", sans-serif;
+}
+.m-field textarea {
+  resize: none;
+  line-height: normal;
+}
+.m-field.area {
+  height: auto;
+  padding: 14px 16px;
+}
+.m-field.area textarea {
+  font: 400 16px var(--font-mono);
+}
+.m-field input.mono {
+  font: 400 18px var(--font-mono);
+  letter-spacing: 2px;
+}
+.m-field:not(.pw) input.mono {
+  font-size: 17px;
+  letter-spacing: 0;
+}
+/* Sign-up fields are a little larger. */
+.m-field.big {
+  height: 60px;
+  padding: 0 6px 0 18px;
+  border-radius: 18px;
+}
+.m-field.big input {
+  font: 400 18px "DM Sans Variable", sans-serif;
+}
+/* Settings password fields: 56px inside a 1px border. */
+.m-field.pw {
+  height: 58px;
+}
+.m-eye {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  padding: 0;
+  border-radius: 22px;
+  border: 0;
+  background: none;
+  color: #a1a1aa;
+  display: grid;
+  place-items: center;
+}
+.m-field.big .m-eye {
+  width: 48px;
+  height: 48px;
+  border-radius: 24px;
+  color: #d4d4d8;
+}
+
+/* Lists */
+.m-list {
+  background: var(--panel);
+  border: 1px solid var(--hair);
+  border-radius: 20px;
+  overflow: hidden;
+}
+.m-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 64px;
+  padding: 10px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--hair);
+  background: none;
+  color: var(--text);
+  text-align: left;
+  font-size: 16px;
+  text-decoration: none;
+}
+.m-row:last-child {
+  border-bottom: 0;
+}
+button.m-row:active {
+  background: var(--panel-2);
+}
+.m-row .grow {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.m-row .main {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-row .sub {
+  font-size: 13px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-row .value {
+  font-size: 15px;
+  color: var(--soft);
+}
+.m-badge {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 12px;
+  background: var(--panel-2);
+  color: var(--accent-soft);
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+}
+
+/* Notes */
+.m-note {
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: var(--panel);
+  border: 1px solid var(--hair);
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--soft);
+}
+.m-note.warn {
+  background: rgba(255, 106, 26, 0.1);
+  border-color: var(--accent-line);
+}
+.m-note > svg {
+  flex: none;
+  margin-top: 1px;
+  color: #a1a1aa;
+}
+.m-note.warn > svg {
+  color: #ffb27f;
+}
+.m-error {
+  margin: 0 4px;
+  font-size: 14px;
+  color: #fca5a5;
+}
+
+/* Toast */
+.m-toast {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  z-index: 40;
+  padding: 14px 18px;
+  border-radius: 16px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 15px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+
+/* Scrolling columns: children keep their height instead of squeezing. */
+.m-scroll > * {
+  flex-shrink: 0;
+}
+
+/* The screens are laid out like the designs: sizes are content sizes,
+   unless a rule says border-box. */
+.m-root,
+.m-root *,
+.m-root *::before,
+.m-root *::after {
+  box-sizing: content-box;
+}
+/* Like the designs, form controls keep the browser's border-box. */
+.m-root button,
+.m-root input,
+.m-root select,
+.m-root textarea {
+  box-sizing: border-box;
+}
+.m-root button {
+  padding: 0;
+  margin: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Letter badge tints, see tint.ts. */
+.tint0 { color: #ffb27f; }
+.tint1 { color: #93c5fd; }
+.tint2 { color: #d4d4d8; }
+.tint3 { color: #f4f4f5; }
+.tint4 { color: #fcd34d; }
+.tint5 { color: #86efac; }
+.tint6 { color: #fca5a5; }
+
+/* Pill chips (filters, item types) */
+.m-chip {
+  flex: none;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--soft);
+  font-size: 14px;
+  font-weight: 500;
+}
+.m-chip[aria-pressed="true"],
+.m-chip[aria-checked="true"] {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* Four-part strength meter */
+.m-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+}
+.m-meter .bars {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 3px;
+}
+.m-meter .bars span {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line);
+}
+.m-meter .bars span.on { background: #fbbf24; }
+.m-meter.good .bars span.on { background: #86efac; }
+.m-meter.weak .bars span.on { background: var(--muted); }
+.m-meter .what { font-size: 13px; color: #fbbf24; }
+.m-meter.good .what { color: #86efac; }
+.m-meter.weak .what { color: var(--muted); }
+
+/* Step header with progress, for sign-up */
+.m-steps {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px 0;
+  min-height: 56px;
+}
+.m-steps .segs {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  padding-right: 12px;
+}
+.m-steps .segs span {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.m-steps .segs span.on { background: var(--accent); }
+.m-step-label {
+  margin: 0 4px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+/* Full-screen flows: welcome, sign-up, sign-in, recovery, Emergency Kit. */
+.m-fl {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #0b0b0c;
+  color: #f4f4f5;
+}
+.m-fl.over {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+.m-fl-main {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 24px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.m-fl-main > * {
+  flex: none;
+}
+.m-fl-top {
+  padding: calc(48px + var(--sb)) 12px 0;
+}
+.m-fl-back {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 22px;
+  border: 0;
+  background: none;
+  color: #f4f4f5;
+  display: grid;
+  place-items: center;
+}
+.m-fl-step {
+  margin: 0;
+  font-size: 14px;
+  color: #ffb27f;
+  font-weight: 500;
+}
+.m-fl-title {
+  margin: 0;
+  font-size: 34px;
+  line-height: 1.1;
+  font-weight: 300;
+  letter-spacing: -0.03em;
+}
+.m-fl-lede {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #d4d4d8;
+}
+.m-fl-label {
+  font-size: 14px;
+  color: #a1a1aa;
+  padding-left: 4px;
+}
+.m-fl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.m-fl-foot {
+  padding: 16px 24px calc(32px + var(--bb));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.m-fl-btn {
+  width: 100%;
+  min-height: 58px;
+  padding: 8px 20px;
+  line-height: 1.2;
+  text-align: center;
+  flex: none;
+  border-radius: 29px;
+  border: 0;
+  background: #ff6a1a;
+  color: #140800;
+  font: 600 17px "DM Sans Variable", sans-serif;
+  display: grid;
+  place-items: center;
+}
+.m-fl-btn:disabled {
+  opacity: 0.45;
+}
+.m-fl-btn.ghost {
+  border: 1px solid #2a2a2e;
+  background: none;
+  color: #f4f4f5;
+  font-weight: 500;
+}
+.m-fl-link {
+  min-height: 44px;
+  padding: 6px 12px;
+  line-height: 1.2;
+  text-align: center;
+  flex: none;
+  border: 0;
+  background: none;
+  color: #ffb27f;
+  font: 400 15px "DM Sans Variable", sans-serif;
+  display: grid;
+  place-items: center;
+}
+
+/* After the reset: fields are measured with their border, as in the designs. */
+.m-root .m-field {
+  box-sizing: border-box;
+}
+
+/* Short windows: landscape phones, split screen, or a tall keyboard.
+   Instead of pinning headers and buttons and leaving a sliver to scroll,
+   the whole screen scrolls as one, with its buttons at the end. */
+@media (max-height: 460px) {
+  .m-root .m-fl,
+  .m-root .m-page,
+  .m-root .shell {
+    overflow-y: auto;
+  }
+  .m-root .m-fl > *,
+  .m-root .m-page > *,
+  .m-root .shell > * {
+    flex: none;
+  }
+  .m-root .m-fl > main,
+  .m-root .m-page > main,
+  .m-root .shell .m-scroll,
+  .m-root .shell .list {
+    overflow: visible;
+    min-height: auto;
+  }
+  .m-root .shell .nav {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+  }
+  .m-root .shell .fab {
+    position: fixed;
+  }
+}
+
+/* Switches, for settings that turn on and off (Material 3 proportions). */
+.m-root input.m-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  width: 52px;
+  height: 32px;
+  margin: 0;
+  border-radius: 16px;
+  border: 2px solid #52525b;
+  background: #1c1c1f;
+  transition: background-color 0.15s, border-color 0.15s;
+  cursor: pointer;
+}
+.m-root input.m-switch::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #a1a1aa;
+  transform: translateY(-50%);
+  transition: left 0.15s, width 0.15s, height 0.15s, background-color 0.15s;
+}
+.m-root input.m-switch:checked {
+  border-color: #ff6a1a;
+  background: #ff6a1a;
+}
+.m-root input.m-switch:checked::before {
+  left: 22px;
+  width: 24px;
+  height: 24px;
+  background: #140800;
+}
+.m-root input.m-switch:disabled {
+  opacity: 0.4;
+}
+.m-root input.m-switch:focus-visible {
+  outline: 2px solid #ffb27f;
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .m-root input.m-switch,
+  .m-root input.m-switch::before {
+    transition: none;
+  }
+}
+
+/* A dark checkbox, for confirmations. */
+.m-root input.m-check {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  border-radius: 7px;
+  border: 2px solid #52525b;
+  background: #1c1c1f;
+  cursor: pointer;
+}
+.m-root input.m-check:checked {
+  border-color: #ff6a1a;
+  background: #ff6a1a;
+}
+.m-root input.m-check:checked::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 2px;
+  width: 6px;
+  height: 11px;
+  border: solid #140800;
+  border-width: 0 2.5px 2.5px 0;
+  transform: rotate(45deg);
+}
+.m-root input.m-check:focus-visible {
+  outline: 2px solid #ffb27f;
+  outline-offset: 2px;
+}
+
+/* While scanning a QR code the camera shows behind the page: everything
+   but the scanner's frame is hidden and the page is see-through. */
+html.m-scanning,
+html.m-scanning body,
+html.m-scanning #app,
+html.m-scanning .m-root {
+  background: transparent !important;
+}
+html.m-scanning .m-root * {
+  visibility: hidden;
+}
+html.m-scanning .m-root .scan-overlay,
+html.m-scanning .m-root .scan-overlay * {
+  visibility: visible;
+}

@@ -79,7 +79,7 @@
     <p class="note" role="alert"><Icon name="alert" />{error}</p>
   {/if}
 
-  <div class="layout">
+  <div class="layout" class:picked={selected !== null}>
     <nav class="side" aria-label="Their vaults">
       <div class="small group">Their vaults</div>
       {#each vaults as v (v.id)}
@@ -118,6 +118,11 @@
     </section>
 
     <main class="detail">
+      {#if selected}
+        <button type="button" class="btn ghost sm to-list" onclick={() => (selected = null)}>
+          <Icon name="arrowLeft" size={15} />All items
+        </button>
+      {/if}
       {#if vault && selected}
         {#key selected}
           <ItemDetail
@@ -134,7 +139,7 @@
       {:else}
         <p class="lede">
           Pick an item. Nothing here can be changed, and closing this deletes the copies from this
-          computer.
+          device.
         </p>
       {/if}
     </main>
@@ -254,5 +259,57 @@
   .detail {
     overflow-y: auto;
     padding: 32px 40px;
+  }
+  .to-list {
+    display: none;
+  }
+
+  /* Phones: vaults as a strip, then the list or the item. */
+  .viewer {
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+      env(safe-area-inset-left);
+  }
+  @media (max-width: 760px) {
+    .bar {
+      padding: 10px 14px;
+    }
+    .layout {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+    .side {
+      flex-direction: row;
+      align-items: center;
+      overflow-x: auto;
+      padding: 10px 12px;
+      border-right: 0;
+      border-bottom: 1px solid var(--hair);
+    }
+    .group {
+      display: none;
+    }
+    .side-item {
+      flex: none;
+      gap: 8px;
+    }
+    .list,
+    .detail {
+      grid-row: 2;
+      border-right: 0;
+    }
+    .layout.picked .list,
+    .layout:not(.picked) .detail {
+      display: none;
+    }
+    .detail {
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .to-list {
+      display: inline-flex;
+      align-self: flex-start;
+    }
   }
 </style>

@@ -5,6 +5,7 @@
     importChooseFile,
     importFinish,
     importProgress,
+    importDuplicates,
     importStart,
     type ImportPreview,
     type ImportProgress,
@@ -32,6 +33,8 @@
   let busy = $state(false);
   let error = $state("");
   let fileDeleted = $state(false);
+  /** Whether the app may delete the file; not on phones. */
+  let canDelete = $state(true);
 
   $effect(() => {
     if (!target) target = writable.find((v) => v.id === current)?.id ?? writable[0]?.id ?? "";
@@ -45,6 +48,7 @@
       if (chosen) {
         fileName = chosen.file_name;
         preview = chosen.preview;
+        canDelete = chosen.can_delete;
         step = "preview";
       }
     } catch (e) {
@@ -104,7 +108,21 @@
     onclose();
   }
 
-  const total = $derived(preview ? preview.logins + preview.notes : 0);
+  /** Items exactly like ones already in the chosen vault: left out. */
+  let duplicates = $state(0);
+  $effect(() => {
+    const vault = target;
+    const ready = preview !== null;
+    duplicates = 0;
+    if (!vault || !ready) return;
+    importDuplicates(vault).then(
+      (n) => {
+        if (target === vault) duplicates = n;
+      },
+      () => {},
+    );
+  });
+  const total = $derived(preview ? Math.max(0, preview.logins + preview.notes - duplicates) : 0);
   const percent = $derived(
     progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 10) : 0,
   );
@@ -130,7 +148,7 @@
     {#if step === "choose"}
       <p class="lede">
         Export your passwords as a CSV file from your current password manager, then choose the file
-        here. It's read on this computer and encrypted before anything is uploaded.
+        here. It's read on this device and encrypted before anything is uploaded.
       </p>
       <p class="small">
         Works with exports from Bitwarden, 1Password, Chrome, Edge, Brave, Firefox, Safari, LastPass,
@@ -156,6 +174,12 @@
                 {preview.skipped === 1 ? "row" : "rows"} left out{/if}</span
             >
           </div>
+          {#if duplicates > 0}
+            <div>
+              <span class="small">Already in the vault</span>
+              <span>{duplicates} {duplicates === 1 ? "item" : "items"}, left out</span>
+            </div>
+          {/if}
           {#if preview.folders || preview.custom_fields}
             <div>
               <span class="small">Also kept</span>
@@ -226,6 +250,17 @@
         <p class="small">The export file was deleted.</p>
         <div class="row actions">
           <button type="button" class="btn primary" onclick={onclose}>Done</button>
+        </div>
+      {:else if !canDelete}
+        <div class="note">
+          <Icon name="alert" />
+          <span
+            >{fileName} still holds your passwords unencrypted. Delete it now in your Files app,
+            and from any cloud drive it was saved to.</span
+          >
+        </div>
+        <div class="row actions">
+          <button type="button" class="btn primary" onclick={() => finish(false)}>Done</button>
         </div>
       {:else}
         <div class="note">

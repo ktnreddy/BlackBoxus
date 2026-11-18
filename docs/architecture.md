@@ -43,7 +43,7 @@ What the server can still see, and the known limits of these guarantees, are lis
 | `client-core` | Rust, no I/O | Trusted; sequences `vault-core` and checks every server answer |
 | Desktop app | Tauri 2, TypeScript UI | Trusted device |
 | Browser extension | TypeScript, `vault-core` compiled to WebAssembly | Trusted device; autofill picker outside page DOM |
-| Android app | Kotlin, Jetpack Compose, `vault-core` via UniFFI | Trusted device |
+| Android app | The desktop app built for Android by Tauri 2; same Rust and screens | Trusted device |
 | iOS app | Swift, SwiftUI, `vault-core` via UniFFI | Trusted device |
 | API | Rust on Cloudflare Workers | Untrusted |
 | Database | Cloudflare D1 (SQLite) | Untrusted; ciphertext and public data only |

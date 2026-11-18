@@ -24,8 +24,9 @@ const MAX_WAIT: Duration = Duration::from_secs(16 * 60);
 
 /// A file chosen for import and waiting for the user to confirm.
 pub struct PendingImport {
-    /// Where the file is, so the user can have it deleted afterwards.
-    pub path: PathBuf,
+    /// Where the file is, so the user can have it deleted afterwards, if
+    /// the app may delete it.
+    pub path: Option<PathBuf>,
     /// Its items.
     pub items: Vec<Item>,
     /// What was shown.

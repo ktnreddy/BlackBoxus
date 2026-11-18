@@ -54,6 +54,9 @@ pub struct HelloStatus {
     pub enabled: bool,
     /// The master password is needed first (14 days have passed).
     pub needs_password: bool,
+    /// The hardware is there but no fingerprint, face or screen lock is
+    /// set up on the device yet.
+    pub setup_needed: bool,
 }
 
 fn credential_name(account: &AccountId) -> String {
@@ -112,6 +115,7 @@ impl DeviceUnlock {
             enabled: saved.is_some(),
             needs_password: saved
                 .is_some_and(|s| now_ms.saturating_sub(s.password_ms) > PASSWORD_EVERY_MS),
+            setup_needed: self.hello.setup_needed(),
         }
     }
 
@@ -180,9 +184,19 @@ impl DeviceUnlock {
         if now_ms.saturating_sub(saved.password_ms) > PASSWORD_EVERY_MS {
             return Err(AppError::PasswordNeeded);
         }
-        let signature = self
+        let signature = match self
             .hello
-            .sign(&credential_name(account), &challenge(account))?;
+            .sign(&credential_name(account), &challenge(account))
+        {
+            Ok(signature) => signature,
+            Err(AppError::HelloMissing) => {
+                // The key can't come back: turn unlocking off so the app
+                // stops offering it, and the user can set it up again.
+                self.disable(account)?;
+                return Err(AppError::HelloMissing);
+            }
+            Err(e) => return Err(e),
+        };
         let key = device_key(&signature)?;
         let wrapped =
             wire::unb64(&saved.wrapped_key_set, WRAPPED_KEY_SET_LEN).ok_or(AppError::Tampered)?;
@@ -301,6 +315,26 @@ mod tests {
         saved.sealed_session = wire::b64(&[0; 80]);
         device.save(&saved)?;
         assert_eq!(device.unlock(&account, 1).err(), Some(AppError::Tampered));
+        Ok(())
+    }
+
+    #[test]
+    fn a_key_the_phone_invalidated_turns_unlocking_off() -> Result<(), AppError> {
+        let account = AccountId::from_bytes([6; 16]);
+        let device = DeviceUnlock::new(dir("invalidated"), crate::hello::fake());
+        let first = unlocked(account)?;
+        device.enable(&first, 0)?;
+        // As when a fingerprint is added: the key behind the check is gone.
+        device.hello.delete(&credential_name(&account));
+        assert_eq!(
+            device.unlock(&account, 1).err(),
+            Some(AppError::HelloMissing)
+        );
+        // Unlocking is off, so the app asks for the password and can offer
+        // to set the fingerprint up again; doing so works.
+        assert!(!device.status(Some(&account), 1).enabled);
+        device.enable(&first, 2)?;
+        assert!(device.unlock(&account, 3).is_ok());
         Ok(())
     }
 }

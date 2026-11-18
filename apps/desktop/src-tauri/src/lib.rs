@@ -1,24 +1,38 @@
-//! The BlackBoxus desktop app.
+//! The BlackBoxus app, for desktops and Android.
 //!
 //! The window shows the screens; everything that touches keys or the
 //! server runs here, in Rust, through `client-core`. The window can only
 //! call the commands in `commands`, and the content security policy in
 //! `tauri.conf.json` stops it loading anything from the network.
 
+#[cfg(any(target_os = "android", test))]
+mod autofill;
 mod breach;
+#[cfg(desktop)]
 pub mod browser;
+#[cfg(mobile)]
+#[path = "browser_mobile.rs"]
+pub mod browser;
+#[cfg(desktop)]
+mod clipboard;
+#[cfg(mobile)]
+#[path = "clipboard_mobile.rs"]
 mod clipboard;
 mod commands;
 mod device_unlock;
 mod error;
 pub mod flows;
 mod generator;
+mod health;
 mod hello;
 pub mod http;
 mod import;
 mod importer;
 mod items;
 mod live;
+mod pending;
+#[cfg(target_os = "android")]
+mod scanner;
 pub mod sharing_id;
 mod state;
 pub mod storage;
@@ -34,24 +48,32 @@ pub use error::AppError;
 /// Why the app could not start.
 pub type StartError = tauri::Error;
 
+/// What can unlock without the master password on this device: Windows
+/// Hello, or a fingerprint on Android.
+#[cfg(target_os = "android")]
+fn unlock_keys(app: &tauri::AppHandle, dir: &std::path::Path) -> Box<dyn hello::HelloKeys> {
+    hello::fingerprint(app.clone(), dir.to_path_buf())
+}
+
+/// What can unlock without the master password on this device: Windows
+/// Hello, or a fingerprint on Android.
+#[cfg(not(target_os = "android"))]
+fn unlock_keys(_app: &tauri::AppHandle, _dir: &std::path::Path) -> Box<dyn hello::HelloKeys> {
+    hello::provider()
+}
+
 /// Starts the app and runs until the window is closed.
 ///
 /// # Errors
 ///
 /// Returns an error if the window or webview cannot be created.
 pub fn run() -> Result<(), StartError> {
-    tauri::Builder::default()
-        // Two copies of the app would race on the stored account, so a
-        // second launch just brings the open window forward.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                // Best effort: the window may be closing.
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
-        }))
+    builder()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            #[cfg(mobile)]
+            clipboard::attach(app.handle().clone());
             storage::init_secret_store()?;
             let dir = app.path().app_data_dir()?;
             let storage = storage::Storage::new(dir.clone());
@@ -59,7 +81,7 @@ pub fn run() -> Result<(), StartError> {
             app.manage(state::AppState::new(
                 storage,
                 http::Https::new(),
-                device_unlock::DeviceUnlock::new(dir, hello::provider()),
+                device_unlock::DeviceUnlock::new(dir.clone(), unlock_keys(app.handle(), &dir)),
             ));
             app.manage(browser::Bridge::default());
             if browser_on {
@@ -84,6 +106,13 @@ pub fn run() -> Result<(), StartError> {
             commands::reveal_field,
             commands::copy_field,
             commands::save_item,
+            commands::scan_code,
+            commands::cancel_scan,
+            commands::autofill_status,
+            commands::autofill_settings,
+            commands::pending_changes,
+            commands::conflict_field,
+            commands::resolve_conflict,
             commands::delete_item,
             commands::generate_password,
             commands::my_sharing_id,
@@ -94,6 +123,7 @@ pub fn run() -> Result<(), StartError> {
             commands::copy_text,
             commands::import_choose_file,
             commands::import_start,
+            commands::import_duplicates,
             commands::import_progress,
             commands::import_finish,
             commands::hello_enable,
@@ -120,6 +150,8 @@ pub fn run() -> Result<(), StartError> {
             commands::request_emergency,
             commands::open_emergency,
             commands::close_emergency,
+            commands::password_health,
+            commands::open_website,
             commands::create_vault,
             commands::rename_vault,
             commands::browser_status,
@@ -128,6 +160,46 @@ pub fn run() -> Result<(), StartError> {
             commands::forget_browser,
         ])
         .run(tauri::generate_context!())
+}
+
+/// Where Android starts the app. The generated glue is Tauri's.
+#[cfg(mobile)]
+mod mobile {
+    #[tauri::mobile_entry_point]
+    fn start() {
+        // Nothing to report to: Android shows the app as stopped.
+        let _ = super::run();
+    }
+}
+
+/// The desktop builder: two copies of the app would race on the stored
+/// account, so a second launch just brings the open window forward.
+#[cfg(desktop)]
+fn builder() -> tauri::Builder<tauri::Wry> {
+    tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Some(window) = app.get_webview_window("main") {
+            // Best effort: the window may be closing.
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }))
+}
+
+/// The phone builder: Android runs one copy itself, and the clipboard
+/// goes through its plugin.
+#[cfg(mobile)]
+fn builder() -> tauri::Builder<tauri::Wry> {
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_fs::init());
+    // Fingerprint unlock. Only the Rust side calls it: the window has no
+    // permission for the plugin's commands.
+    #[cfg(target_os = "android")]
+    let builder = builder
+        .plugin(tauri_plugin_biometric::init())
+        .plugin(scanner::init())
+        .plugin(autofill::init());
+    builder
 }
 
 #[cfg(test)]

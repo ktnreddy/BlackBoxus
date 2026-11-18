@@ -5,10 +5,12 @@
   import {
     denyEmergency,
     errorMessage,
+    getItem,
     isAppError,
     listItems,
     onServerHint,
     lock,
+    pendingChanges,
     syncVaults,
     type AppStatus,
     type EmergencyKit,
@@ -27,6 +29,8 @@
   import VaultNameDialog from "./vault/VaultNameDialog.svelte";
   import TrustedContactsDialog from "./vault/TrustedContactsDialog.svelte";
   import EmergencyViewer from "./vault/EmergencyViewer.svelte";
+  import ConflictDialog from "./vault/ConflictDialog.svelte";
+  import HealthDialog from "./vault/HealthDialog.svelte";
 
   let {
     status,
@@ -55,7 +59,7 @@
   let syncing = $state(true);
   let syncError = $state("");
   let syncedAt = $state<number | null>(null);
-  /** Showing this computer's copy because the server can't be reached. */
+  /** Showing this device's copy because the server can't be reached. */
   let offline = $state(false);
   let notice = $state("");
   /** The key log lists keys for this account that it did not publish. */
@@ -89,6 +93,7 @@
   }
   let sharing = $state(false);
   let generatorOpen = $state(false);
+  let healthOpen = $state(false);
   let importOpen = $state(false);
   let settingsOpen = $state(false);
   /** Naming a vault: a new one, or renaming the one shown. */
@@ -96,8 +101,38 @@
   let now = $state(Date.now());
 
   const found = $derived(vaults.find((v) => v.id === vaultId) ?? null);
-  /** While offline, every vault is read-only. */
-  const vault = $derived(found && offline ? { ...found, writable: false } : found);
+  /** Offline, changes are kept on this computer and sent once back online. */
+  const vault = $derived(found);
+  /** Changes made offline, still to be sent. */
+  let waiting = $state(0);
+  /** Items changed both here and elsewhere, for the user to settle. */
+  let conflicts = $state(0);
+  let conflictsOpen = $state(false);
+
+  async function refreshPending() {
+    try {
+      const p = await pendingChanges();
+      waiting = p.waiting;
+      conflicts = p.conflicts.length;
+    } catch {
+      // Only a hint; the next sync counts again.
+    }
+  }
+
+  // While offline, try again every 30 seconds and when the network comes
+  // back, so waiting changes go out by themselves.
+  $effect(() => {
+    if (!offline) return;
+    const retry = () => {
+      if (!syncing && !editing) sync();
+    };
+    const timer = setInterval(retry, 30_000);
+    window.addEventListener("online", retry);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("online", retry);
+    };
+  });
   const shownItems = $derived(
     items.filter(
       (i) =>
@@ -127,6 +162,8 @@
       unknownKeys = synced.unknown_keys;
       dismissed.unknownKeys = false;
       emergencyRequest = synced.emergency_request;
+      waiting = synced.waiting;
+      conflicts = synced.conflicts;
       if (!vaults.some((v) => v.id === vaultId)) vaultId = vaults[0]?.id ?? null;
       syncedAt = Date.now();
       await refreshItems();
@@ -199,6 +236,7 @@
   }
 
   function chooseVault(id: string) {
+    chose();
     vaultId = id;
     sharing = false;
     selected = null;
@@ -211,16 +249,26 @@
     await refreshItems();
     vaults = vaults.map((v) => (v.id === vaultId ? { ...v, items: items.length } : v));
     selected = id;
-    syncedAt = Date.now();
-    showNotice("Saved and synced.");
+    if (offline) {
+      await refreshPending();
+      showNotice("Saved on this computer. It syncs when you're back online.");
+    } else {
+      syncedAt = Date.now();
+      showNotice("Saved and synced.");
+    }
   }
 
   async function deleted() {
     selected = null;
     await refreshItems();
     vaults = vaults.map((v) => (v.id === vaultId ? { ...v, items: items.length } : v));
-    syncedAt = Date.now();
-    showNotice("Deleted.");
+    if (offline) {
+      await refreshPending();
+      showNotice("Deleted on this computer. It syncs when you're back online.");
+    } else {
+      syncedAt = Date.now();
+      showNotice("Deleted.");
+    }
   }
 
   function ago(at: number, current: number): string {
@@ -229,6 +277,61 @@
     if (minutes === 1) return "a minute ago";
     if (minutes < 60) return `${minutes} minutes ago`;
     return "over an hour ago";
+  }
+
+  // Phones and narrow windows show one pane at a time: the item list, or
+  // the item (or sharing) with a back button, and the vault menu in a
+  // drawer. Each step forward adds a history entry, so Android's back
+  // gesture steps back through them.
+  const narrowQuery = window.matchMedia("(max-width: 760px)");
+  let narrow = $state(narrowQuery.matches);
+  let drawerOpen = $state(false);
+  $effect(() => {
+    const update = () => {
+      narrow = narrowQuery.matches;
+      if (!narrow) drawerOpen = false;
+    };
+    narrowQuery.addEventListener("change", update);
+    return () => narrowQuery.removeEventListener("change", update);
+  });
+  /** The pane shown on a narrow screen. */
+  const pane = $derived(
+    sharing ? "share" : editing !== null || selected !== null ? "detail" : "list",
+  );
+  /** History entries added for steps forward, not yet stepped back. */
+  let pushed = 0;
+  function forward() {
+    if (!narrow) return;
+    history.pushState({ blackboxus: true }, "");
+    pushed += 1;
+  }
+  /** One step back: the drawer, then the editor, then the item. */
+  function stepBack() {
+    if (drawerOpen) drawerOpen = false;
+    else if (sharing) sharing = false;
+    else if (editing !== null) editing = null;
+    else if (selected !== null) selected = null;
+  }
+  /** The on-screen back button, which uses the same history entries. */
+  function back() {
+    if (pushed > 0) history.back();
+    else stepBack();
+  }
+  $effect(() => {
+    const popped = () => {
+      pushed = Math.max(0, pushed - 1);
+      stepBack();
+    };
+    window.addEventListener("popstate", popped);
+    return () => window.removeEventListener("popstate", popped);
+  });
+  function openDrawer() {
+    drawerOpen = true;
+    forward();
+  }
+  /** Closes the drawer after a choice in it. */
+  function chose() {
+    if (drawerOpen) back();
   }
 
   const FILTERS: [typeof filter, string, IconName][] = [
@@ -259,14 +362,50 @@
       Deny
     </button>
   </StatusBar>
+{:else if conflicts > 0}
+  <StatusBar icon="alert" tone="danger">
+    {conflicts === 1 ? "An item was" : `${conflicts} items were`} changed both here while offline and
+    on another device.
+    <button type="button" class="btn ghost sm deny" onclick={() => (conflictsOpen = true)}>Review</button>
+  </StatusBar>
 {:else if syncError && !dismissed.syncError}
   <StatusBar icon="alert" tone="danger" ondismiss={() => (dismissed.syncError = true)}>
     {syncError}
   </StatusBar>
 {/if}
 
-<div class="layout">
-  <nav class="side" aria-label="Vaults">
+<div class="layout" class:narrow data-pane={pane}>
+  {#if narrow}
+    <header class="topbar">
+      {#if pane === "list"}
+        <button type="button" class="icon-btn" aria-label="Menu" onclick={openDrawer}>
+          <Icon name="menu" />
+        </button>
+        <span class="top-title">{vault?.name ?? "BlackBoxus"}</span>
+        <button
+          type="button"
+          class="icon-btn"
+          aria-label="Sync now"
+          disabled={syncing}
+          onclick={sync}
+        >
+          <Icon name="refresh" />
+        </button>
+      {:else}
+        <button type="button" class="icon-btn" aria-label="Back" onclick={back}>
+          <Icon name="arrowLeft" />
+        </button>
+        <span class="top-title">{pane === "share" ? "Share this vault" : (vault?.name ?? "")}</span>
+      {/if}
+    </header>
+    {#if drawerOpen}
+      <button type="button" class="scrim" aria-label="Close menu" onclick={back}></button>
+    {/if}
+    {#if notice && pane === "list"}
+      <div class="toast" role="status"><Icon name="check" size={16} />{notice}</div>
+    {/if}
+  {/if}
+  <nav class="side" class:open={drawerOpen} aria-label="Vaults" inert={narrow && !drawerOpen}>
     <div class="brand"><Logo /></div>
     <div class="small group">Vaults</div>
     {#each vaults as v (v.id)}
@@ -286,7 +425,14 @@
       </button>
     {/each}
     {#if !offline}
-      <button type="button" class="side-item plain" onclick={() => (naming = "new")}>
+      <button
+        type="button"
+        class="side-item plain"
+        onclick={() => {
+          chose();
+          naming = "new";
+        }}
+      >
         <span class="side-name"><Icon name="plus" size={16} />New vault</span>
       </button>
     {/if}
@@ -296,12 +442,23 @@
         class="side-item plain"
         class:on={sharing}
         aria-pressed={sharing}
-        onclick={() => (sharing = !sharing)}
+        onclick={() => {
+          chose();
+          sharing = !sharing;
+          if (sharing) forward();
+        }}
       >
         <span class="side-name"><Icon name="users" size={16} />Share this vault</span>
       </button>
       {#if vault.writable}
-        <button type="button" class="side-item plain" onclick={() => (naming = "rename")}>
+        <button
+          type="button"
+          class="side-item plain"
+          onclick={() => {
+            chose();
+            naming = "rename";
+          }}
+        >
           <span class="side-name"><Icon name="edit" size={16} />Rename this vault</span>
         </button>
       {/if}
@@ -315,6 +472,7 @@
         class:on={filter === value}
         aria-pressed={filter === value}
         onclick={() => {
+          chose();
           filter = value;
           sharing = false;
         }}
@@ -323,14 +481,34 @@
       </button>
     {/each}
     <div class="rule spacer"></div>
-    <button type="button" class="side-item plain" onclick={() => (generatorOpen = true)}>
+    <button
+      type="button"
+      class="side-item plain"
+      onclick={() => {
+        chose();
+        generatorOpen = true;
+      }}
+    >
       <span class="side-name"><Icon name="wand" size={16} />Password generator</span>
     </button>
     <button
       type="button"
       class="side-item plain"
+      onclick={() => {
+        chose();
+        healthOpen = true;
+      }}
+    >
+      <span class="side-name"><Icon name="shield" size={16} />Password health</span>
+    </button>
+    <button
+      type="button"
+      class="side-item plain"
       disabled={offline}
-      onclick={() => (importOpen = true)}
+      onclick={() => {
+        chose();
+        importOpen = true;
+      }}
     >
       <span class="side-name"><Icon name="upload" size={16} />Import passwords</span>
     </button>
@@ -338,7 +516,10 @@
       type="button"
       class="side-item plain"
       disabled={offline}
-      onclick={() => (trustedOpen = true)}
+      onclick={() => {
+        chose();
+        trustedOpen = true;
+      }}
     >
       <span class="side-name"><Icon name="key" size={16} />Trusted contacts</span>
     </button>
@@ -351,7 +532,9 @@
       {#if syncing}
         <Icon name="refresh" size={14} />Syncing and checking…
       {:else if offline}
-        <Icon name="alert" size={14} />Offline · read-only copy
+        <Icon name="alert" size={14} />Offline · {waiting > 0
+          ? `${waiting} ${waiting === 1 ? "change" : "changes"} waiting`
+          : "changes sync later"}
       {:else if syncError}
         <Icon name="alert" size={14} />Sync failed · try again
       {:else}
@@ -359,14 +542,24 @@
       {/if}
     </div>
     <div class="side-foot">
-      <button type="button" class="btn ghost sm grow" onclick={lockNow}>
+      <button
+        type="button"
+        class="btn ghost sm grow"
+        onclick={() => {
+          chose();
+          lockNow();
+        }}
+      >
         <Icon name="lock" size={15} />Lock now
       </button>
       <button
         type="button"
         class="icon-btn"
         aria-label="Settings"
-        onclick={() => (settingsOpen = true)}
+        onclick={() => {
+          chose();
+          settingsOpen = true;
+        }}
       >
         <Icon name="gear" />
       </button>
@@ -414,6 +607,7 @@
         onclick={() => {
           editing = "new";
           selected = null;
+          forward();
         }}
       >
         <Icon name="plus" />
@@ -433,6 +627,7 @@
             onclick={() => {
               selected = i.id;
               editing = null;
+              forward();
             }}
           >
             <span class="letter" aria-hidden="true">{i.title.slice(0, 1).toUpperCase()}</span>
@@ -440,6 +635,11 @@
               <span class="item-title">{i.title}</span>
               <span class="small item-sub">{i.subtitle}</span>
             </span>
+            {#if i.pending}
+              <span class="pending" class:bad={i.pending === "conflict"}>
+                {i.pending === "new" ? "New" : i.pending === "edited" ? "Edited" : "Conflict"}
+              </span>
+            {/if}
           </button>
         </li>
       {/each}
@@ -464,7 +664,10 @@
         vaultName={vault.name}
         itemId={selected}
         writable={vault.writable}
-        onedit={(item) => (editing = item)}
+        onedit={(item) => {
+          editing = item;
+          forward();
+        }}
         ondeleted={deleted}
         onnotice={showNotice}
       />
@@ -543,6 +746,35 @@
     vaults={viewing.vaults}
     onclose={() => (viewing = null)}
     onnotice={showNotice}
+  />
+{/if}
+
+{#if healthOpen}
+  <HealthDialog
+    onclose={() => (healthOpen = false)}
+    onfix={async (v, id) => {
+      // Fixing a password means editing it.
+      healthOpen = false;
+      chooseVault(v);
+      try {
+        editing = await getItem(v, id);
+        selected = id;
+        forward();
+      } catch (e) {
+        showNotice(errorMessage(e));
+      }
+    }}
+  />
+{/if}
+
+{#if conflictsOpen}
+  <ConflictDialog
+    onclose={() => (conflictsOpen = false)}
+    onnotice={showNotice}
+    onresolved={async (left) => {
+      conflicts = left;
+      await refreshItems();
+    }}
   />
 {/if}
 
@@ -754,6 +986,18 @@
   .empty {
     padding: 0 8px;
   }
+  .pending {
+    margin-left: auto;
+    flex: none;
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    color: var(--accent-soft);
+    font-size: 12px;
+  }
+  .pending.bad {
+    color: #fca5a5;
+  }
 
   .detail {
     position: relative;
@@ -773,6 +1017,98 @@
     flex-direction: column;
     gap: 16px;
   }
+  .topbar {
+    display: none;
+  }
+  .scrim {
+    display: none;
+  }
+
+  /* One pane at a time on phones and narrow windows. */
+  .layout.narrow {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    position: relative;
+  }
+  .narrow .topbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 56px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--hair);
+    background: var(--bg);
+  }
+  .top-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 17px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .narrow .icon-btn {
+    width: 44px;
+    height: 44px;
+  }
+  .narrow .side {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 20;
+    width: min(300px, 84vw);
+    padding: 20px 14px calc(20px + env(safe-area-inset-bottom));
+    border-right: 1px solid var(--line);
+    transform: translateX(-102%);
+    transition: transform 0.18s ease-out;
+    visibility: hidden;
+  }
+  .narrow .side.open {
+    transform: none;
+    visibility: visible;
+  }
+  .narrow .side-item {
+    height: 46px;
+  }
+  .narrow .scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 19;
+    border: 0;
+    padding: 0;
+    background: rgba(5, 5, 6, 0.6);
+  }
+  .narrow .list,
+  .narrow .detail {
+    grid-column: 1;
+    grid-row: 2;
+    border-right: 0;
+  }
+  .narrow[data-pane="list"] .detail,
+  .narrow[data-pane="detail"] .list {
+    display: none;
+  }
+  .narrow .list {
+    padding: 14px 14px 0;
+  }
+  .narrow .items {
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  }
+  .narrow .item {
+    padding: 12px;
+  }
+  .narrow .detail {
+    padding: 20px 18px calc(28px + env(safe-area-inset-bottom));
+  }
+  .narrow .toast {
+    left: 16px;
+    right: 16px;
+    top: auto;
+    bottom: calc(16px + env(safe-area-inset-bottom));
+    justify-content: center;
+  }
+
   .toast {
     position: absolute;
     right: 48px;

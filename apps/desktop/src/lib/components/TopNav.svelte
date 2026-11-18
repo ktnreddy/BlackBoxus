@@ -23,5 +23,16 @@
     display: flex;
     align-items: center;
     gap: 16px;
+    min-width: 0;
+  }
+  @media (max-width: 760px) {
+    .nav {
+      height: 60px;
+      padding: 0 18px;
+    }
+    /* The server name is in Settings; the logo and buttons fit. */
+    .right :global(.server) {
+      display: none;
+    }
   }
 </style>

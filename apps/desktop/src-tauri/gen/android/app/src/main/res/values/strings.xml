@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">"BlackBoxus"</string>
+    <string name="main_activity_title">"BlackBoxus"</string>
+
+    <!-- Autofill in other apps -->
+    <string name="autofill_service_label">BlackBoxus</string>
+    <string name="autofill_offer">Fill with BlackBoxus</string>
+    <string name="autofill_title">Choose a login</string>
+    <string name="autofill_cancel">Cancel</string>
+    <string name="autofill_for_site">For %1$s</string>
+    <string name="autofill_for_app">Asked by the app %1$s</string>
+    <string name="autofill_app_warning">This isn\'t a browser, so BlackBoxus can\'t check which site this is for. Only fill a login that belongs to this app.</string>
+    <string name="autofill_search">Search logins</string>
+    <string name="autofill_loading">Looking for logins…</string>
+    <string name="autofill_locked">BlackBoxus is locked. Open it and unlock, then come back and tap the field again.</string>
+    <string name="autofill_open">Open BlackBoxus</string>
+    <string name="autofill_none_for_site">No logins saved for %1$s.</string>
+    <string name="autofill_none">No logins with a password yet.</string>
+    <string name="autofill_no_results">No logins match.</string>
+    <string name="autofill_nothing">This login has nothing to fill into these fields.</string>
+</resources>

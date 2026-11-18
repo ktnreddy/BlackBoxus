@@ -267,7 +267,7 @@ impl Item {
     /// # Errors
     ///
     /// Returns [`Error::ItemTooLarge`] if a limit is exceeded.
-    pub(crate) fn encode(&self) -> Result<Zeroizing<Vec<u8>>> {
+    pub fn encode(&self) -> Result<Zeroizing<Vec<u8>>> {
         if self.fields.len() > MAX_FIELDS {
             return Err(Error::ItemTooLarge);
         }
@@ -295,7 +295,7 @@ impl Item {
 
     /// Parses content produced by [`Item::encode`]. Strict: unknown codes,
     /// over-limit lengths, invalid UTF-8 and trailing bytes are rejected.
-    pub(crate) fn decode(bytes: &[u8]) -> Result<Self> {
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
         let mut r = Reader(bytes);
         if r.u8()? != SCHEMA_VERSION {
             return Err(Error::MalformedMessage);

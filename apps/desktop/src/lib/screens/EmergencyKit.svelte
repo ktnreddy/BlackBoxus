@@ -7,6 +7,7 @@
     kit,
     again = false,
     step = "Step 2 of 3",
+    mobile = false,
     ondone,
   }: {
     kit: EmergencyKit;
@@ -14,6 +15,8 @@
     again?: boolean;
     /** Where this is in a longer flow, if anywhere. */
     step?: string | null;
+    /** On a phone, which can't print from the app or take screenshots of it. */
+    mobile?: boolean;
     ondone: () => void;
   } = $props();
 
@@ -49,19 +52,29 @@
     {#if kit.recovery_key}
       <p class="note">
         <Icon name="alert" />
-        <span>This is the only time your recovery key is shown. Print or save the kit now.</span>
+        <span
+          >This is the only time your recovery key is shown. {mobile
+            ? "Write it down now."
+            : "Print or save the kit now."}</span
+        >
       </p>
     {/if}
     <ul class="checks">
-      <li><span class="good"><Icon name="check" /></span>Print it, or save it as a PDF on a USB drive</li>
+      {#if mobile}
+        <li><span class="good"><Icon name="check" /></span>Write it down on paper, exactly as shown</li>
+      {:else}
+        <li><span class="good"><Icon name="check" /></span>Print it, or save it as a PDF on a USB drive</li>
+      {/if}
       <li><span class="bad"><Icon name="x" /></span>Don't email it to yourself or keep it in the cloud</li>
       <li><span class="good"><Icon name="check" /></span>Your master password is never in the kit</li>
     </ul>
-    <div class="row">
-      <button type="button" class="btn primary" onclick={() => window.print()}>
-        <Icon name="print" />Print or save as PDF
-      </button>
-    </div>
+    {#if !mobile}
+      <div class="row">
+        <button type="button" class="btn primary" onclick={() => window.print()}>
+          <Icon name="print" />Print or save as PDF
+        </button>
+      </div>
+    {/if}
     {#if !again}
     <div class="rule"></div>
     <div class="row confirm">
@@ -78,7 +91,7 @@
     <div class="kit-bar"></div>
     <div class="kit-body">
       <div class="kit-head">
-        <span class="kit-logo"><span class="kit-mark"><i></i></span>BlackBoxus</span>
+        <span class="kit-logo"><img class="kit-mark" src="/logo.png" alt="" width="26" height="26" />BlackBoxus</span>
         <span class="kit-muted">{again ? "Printed" : "Created"} {created}</span>
       </div>
       <h2 class="kit-title">Emergency Kit</h2>
@@ -171,20 +184,10 @@
     letter-spacing: -0.02em;
   }
   .kit-mark {
-    width: 24px;
-    height: 24px;
-    border-radius: 7px;
-    background: #141416;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .kit-mark i {
-    width: 9px;
-    height: 9px;
-    border-radius: 2px;
-    background: var(--accent);
+    width: 26px;
+    height: 26px;
     display: block;
+    flex: none;
   }
   .kit-muted {
     font-size: 12px;

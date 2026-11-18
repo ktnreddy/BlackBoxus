@@ -16,12 +16,13 @@
   import Unlock from "./lib/screens/Unlock.svelte";
   import Vault from "./lib/screens/Vault.svelte";
   import Welcome from "./lib/screens/Welcome.svelte";
+  import MobileApp from "./mobile/MobileApp.svelte";
 
   let status = $state<AppStatus | null>(null);
   let failure = $state("");
   /** Which first-run screen is showing when there is no account yet. */
   let firstRun = $state<"welcome" | "signup" | "signin" | "recover">("welcome");
-  /** Recovering the locked account on this computer. */
+  /** Recovering the locked account on this device. */
   let recovering = $state(false);
   /** The Emergency Kit, held only until the user confirms they saved it. */
   let kit = $state<Kit | null>(null);
@@ -60,6 +61,10 @@
   );
 </script>
 
+{#if status?.mobile}
+  <!-- Phones get their own screens, made for one hand and a small screen. -->
+  <MobileApp initial={status} />
+{:else}
 {#if pairingRequest}
   <PairingDialog request={pairingRequest} />
 {/if}
@@ -72,6 +77,7 @@
   {:else if kit}
     <EmergencyKit
       {kit}
+      mobile={status.mobile}
       again={kitAgain}
       step={kitStep}
       ondone={() => {
@@ -139,10 +145,13 @@
     />
   {/if}
 </div>
+{/if}
 
 <style>
   .shell {
     height: 100%;
+    /* Phones draw the app under their status and navigation bars. */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
     display: flex;
     flex-direction: column;
     overflow: hidden;

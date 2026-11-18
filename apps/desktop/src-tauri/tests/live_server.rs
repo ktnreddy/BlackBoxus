@@ -814,3 +814,73 @@ fn hints_arrive_when_a_vault_changes() -> Result<(), AppError> {
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
 }
+
+#[test]
+#[ignore = "needs a running server and BLACKBOXUS_LOG_KEY"]
+fn changes_made_offline_sync_later_and_clashes_wait_for_the_user() -> Result<(), AppError> {
+    use blackboxus_desktop::vaults::{Keep, VaultFiles, Vaults, log_key};
+    use vault_core::{Field, FieldKind, Item, ItemType};
+
+    let transport = Https::new();
+    let server = ServerIdentity::new(ORIGIN)?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let email = format!("offline-{nonce}@example.com");
+    let dir = std::env::temp_dir().join(format!("blackboxus-offline-{nonce}"));
+    let (phone, _, secret_key, _) = create_account(&transport, &server, &email, PASSWORD)?;
+    let (laptop, _) = sign_in(&transport, &server, &email, &secret_key, PASSWORD)?;
+    let login = |title: &str, at: u64| Item {
+        item_type: ItemType::Login,
+        created_ms: 1,
+        modified_ms: at,
+        fields: vec![Field::new(FieldKind::Title, title)],
+    };
+
+    let mut a = Vaults::new(VaultFiles::new(dir.join("phone")), log_key()?);
+    a.sync(&transport, &phone)?;
+    let id = vault_core::VaultId::from_bytes(
+        wire::unb64_array(
+            &a.summaries(&phone)
+                .first()
+                .map(|v| v.id.clone())
+                .unwrap_or_default(),
+        )
+        .unwrap_or_default(),
+    );
+    let shared = a.put(&transport, &phone, id, None, &login("Netflix", 1))?;
+    let mut b = Vaults::new(VaultFiles::new(dir.join("laptop")), log_key()?);
+    b.sync(&transport, &laptop)?;
+
+    // Offline on the phone: one new item, and an edit to the shared one.
+    let added = a.put_offline(&phone, id, None, &login("IRCTC", 2))?;
+    a.put_offline(&phone, id, Some(shared), &login("Netflix (phone)", 3))?;
+    assert_eq!(a.pending(&phone)?.waiting, 2);
+    assert_eq!(a.items(&id)?.len(), 2);
+
+    // Meanwhile the laptop changes the shared item too.
+    b.put(
+        &transport,
+        &laptop,
+        id,
+        Some(shared),
+        &login("Netflix (laptop)", 4),
+    )?;
+
+    // Back online: the new item goes out, the clash waits.
+    a.sync(&transport, &phone)?;
+    let pending = a.pending(&phone)?;
+    assert_eq!(pending.waiting, 0);
+    assert_eq!(pending.conflicts.len(), 1);
+    b.sync(&transport, &laptop)?;
+    assert_eq!(b.item(&id, &added)?, login("IRCTC", 2));
+
+    // Keeping both turns the phone's version into its own item.
+    a.resolve(&transport, &phone, id, shared, Keep::Both)?;
+    assert!(a.pending(&phone)?.conflicts.is_empty());
+    assert_eq!(a.item(&id, &shared)?, login("Netflix (laptop)", 4));
+    assert_eq!(a.items(&id)?.len(), 3);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}

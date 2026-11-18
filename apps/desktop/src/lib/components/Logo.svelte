@@ -1,9 +1,9 @@
 <script lang="ts">
-  // The BlackBoxus wordmark: a light tile with the orange core.
+  // The BlackBoxus wordmark: the app icon and the name.
 </script>
 
 <span class="logo">
-  <span class="mark" aria-hidden="true"><i></i></span>
+  <img class="mark" src="/logo.png" alt="" width="28" height="28" />
   BlackBoxus
 </span>
 
@@ -17,20 +17,9 @@
     letter-spacing: -0.02em;
   }
   .mark {
-    width: 26px;
-    height: 26px;
-    border-radius: 8px;
-    background: var(--text);
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    width: 28px;
+    height: 28px;
     flex: none;
-  }
-  .mark i {
-    width: 10px;
-    height: 10px;
-    background: var(--accent);
-    border-radius: 2px;
     display: block;
   }
 </style>

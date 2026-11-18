@@ -21,8 +21,11 @@ use vault_core::log::Role;
 use vault_core::transparency::{TreeHead, safety_number};
 use vault_core::{AccountId, IdentityPublicKey, Item, ItemId, VaultId};
 
+use zeroize::Zeroizing;
+
 use crate::error::AppError;
 use crate::http::Transport;
+use crate::pending::{Change, Queue};
 use crate::sharing_id;
 use crate::storage::write_atomically;
 
@@ -236,6 +239,66 @@ pub struct Vaults {
     pending: Option<(VaultId, VerifiedKeys)>,
     /// Someone looked up to be the trusted contact.
     pending_contact: Option<VerifiedKeys>,
+    /// Changes made while offline, read from disk the first time needed.
+    queue: Option<Queue>,
+}
+
+/// Which version to keep when an item was changed in two places.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Keep {
+    /// The version changed on this device while offline.
+    Mine,
+    /// The version on the server.
+    Theirs,
+    /// Both: this device's version becomes a new item.
+    Both,
+}
+
+/// One version of an item in a conflict.
+#[derive(Debug, Clone, Serialize)]
+pub struct Version {
+    /// The item was deleted in this version.
+    pub deleted: bool,
+    /// When it was changed, Unix milliseconds.
+    pub changed_ms: u64,
+    /// The fields that differ from the other version (all of them if
+    /// only the title differs), concealed values left out.
+    pub fields: Vec<VersionField>,
+}
+
+/// A field of one version of a conflict.
+#[derive(Debug, Clone, Serialize)]
+pub struct VersionField {
+    /// Its position, for [`Vaults::conflict_field`].
+    pub index: usize,
+    /// The field as shown.
+    #[serde(flatten)]
+    pub field: crate::items::FieldView,
+}
+
+/// An item changed both here while offline and elsewhere.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConflictView {
+    /// The vault ID, base64url.
+    pub vault: String,
+    /// The item ID, base64url.
+    pub item: String,
+    /// The item's title, from this device's version when it has one.
+    pub title: String,
+    /// This device's version.
+    pub mine: Version,
+    /// The server's version.
+    pub theirs: Version,
+}
+
+/// Changes waiting to be sent, for the window.
+#[derive(Debug, Clone, Serialize)]
+pub struct PendingView {
+    /// Changes waiting for a connection.
+    pub waiting: usize,
+    /// Changes the user must settle.
+    pub conflicts: Vec<ConflictView>,
 }
 
 fn role_name(role: Role) -> &'static str {
@@ -251,6 +314,17 @@ impl core::fmt::Debug for Vaults {
         f.debug_struct("Vaults")
             .field("count", &self.replicas.len())
             .finish_non_exhaustive()
+    }
+}
+
+/// Whether an item is still as it was when a change was based on it:
+/// `base` is the revision then (0 for an item added here), `current` the
+/// revision and deleted flag on the server now, if it has the item.
+fn unchanged_since(base: u64, current: Option<(u64, bool)>) -> bool {
+    match (base, current) {
+        (0, None) => true,
+        (base, Some((revision, false))) => base > 0 && base == revision,
+        _ => false,
     }
 }
 
@@ -277,7 +351,333 @@ impl Vaults {
             files,
             pending: None,
             pending_contact: None,
+            queue: None,
         }
+    }
+
+    // -- Changes made offline --------------------------------------------
+
+    fn queue(&mut self, unlocked: &Unlocked) -> Result<&mut Queue, AppError> {
+        if self.queue.is_none() {
+            self.queue = Some(Queue::load(&self.files.dir, unlocked)?);
+        }
+        self.queue.as_mut().ok_or(AppError::Storage)
+    }
+
+    fn save_queue(&self, unlocked: &Unlocked) -> Result<(), AppError> {
+        self.queue
+            .as_ref()
+            .map_or(Ok(()), |q| q.save(&self.files.dir, unlocked))
+    }
+
+    /// The current revision of a live (not deleted) item on the server.
+    fn revision(&self, id: &VaultId, item_id: &ItemId) -> Option<u64> {
+        self.replicas
+            .get(id)?
+            .state()?
+            .items
+            .get(item_id)
+            .filter(|s| !s.deleted)
+            .map(|s| s.revision)
+    }
+
+    fn require_writable(&self, id: &VaultId, unlocked: &Unlocked) -> Result<(), AppError> {
+        let role = self
+            .replica(id)?
+            .state()
+            .and_then(|s| s.members.get(unlocked.session.account_id()))
+            .map(|m| m.role);
+        if matches!(role, Some(Role::Owner | Role::Editor)) {
+            Ok(())
+        } else {
+            Err(AppError::ReadOnly)
+        }
+    }
+
+    /// Keeps an added (`item_id = None`) or changed item on this device to
+    /// be sent once online. Returns its ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NotFound`] for an unknown vault or item,
+    /// [`AppError::ReadOnly`] without permission to edit, or a storage
+    /// error.
+    pub fn put_offline(
+        &mut self,
+        unlocked: &Unlocked,
+        id: VaultId,
+        item_id: Option<ItemId>,
+        item: &Item,
+    ) -> Result<ItemId, AppError> {
+        self.require_writable(&id, unlocked)?;
+        let (item_id, base) = match item_id {
+            Some(i) => {
+                let queued = self.queue(unlocked)?.get(&id, &i).map(|c| c.base);
+                let base = match queued {
+                    Some(b) => b,
+                    None => self.revision(&id, &i).ok_or(AppError::NotFound)?,
+                };
+                (i, base)
+            }
+            None => (ItemId::generate().map_err(|_| AppError::Storage)?, 0),
+        };
+        self.queue(unlocked)?
+            .record(id, item_id, base, Some(item.clone()), now_ms())?;
+        self.save_queue(unlocked)?;
+        Ok(item_id)
+    }
+
+    /// Keeps the deletion of an item on this device to be sent once online.
+    ///
+    /// # Errors
+    ///
+    /// As [`Vaults::put_offline`].
+    pub fn delete_offline(
+        &mut self,
+        unlocked: &Unlocked,
+        id: VaultId,
+        item_id: &ItemId,
+    ) -> Result<(), AppError> {
+        self.require_writable(&id, unlocked)?;
+        let queued = self.queue(unlocked)?.get(&id, item_id).map(|c| c.base);
+        let base = match queued {
+            Some(b) => b,
+            None => self.revision(&id, item_id).ok_or(AppError::NotFound)?,
+        };
+        self.queue(unlocked)?
+            .record(id, *item_id, base, None, now_ms())?;
+        self.save_queue(unlocked)
+    }
+
+    /// "new", "edited", "deleted" or "conflict" for an item with a change
+    /// waiting, for the item list.
+    pub fn pending_kind(&self, id: &VaultId, item_id: &ItemId) -> Option<&'static str> {
+        let change = self.queue.as_ref()?.get(id, item_id)?;
+        Some(if change.conflict {
+            "conflict"
+        } else {
+            change.kind()
+        })
+    }
+
+    /// Sends one change if nobody else changed the item meanwhile. Returns
+    /// `false` if they did, so the user must choose.
+    fn send_change(
+        &mut self,
+        transport: &impl Transport,
+        unlocked: &Unlocked,
+        change: &Change,
+    ) -> Result<bool, AppError> {
+        for attempt in 0..2 {
+            let current = self
+                .replica(&change.vault)?
+                .state()
+                .and_then(|s| s.items.get(&change.item))
+                .map(|s| (s.revision, s.deleted));
+            if !unchanged_since(change.base, current) {
+                return Ok(false);
+            }
+            let replica = self.replica(&change.vault)?;
+            let request = match &change.edit {
+                Some(item) => {
+                    replica
+                        .put_item(unlocked, Some(change.item), item, now_ms())
+                        .map_err(vault_error)?
+                        .1
+                }
+                None => replica
+                    .delete_item(unlocked, &change.item, now_ms())
+                    .map_err(vault_error)?,
+            };
+            match written(&transport.send(&request)?) {
+                Ok(()) => {
+                    self.sync_one(transport, unlocked, change.vault)?;
+                    return Ok(true);
+                }
+                // Someone else wrote to the vault first: look again.
+                Err(e) if is_conflict(&e) && attempt == 0 => {
+                    self.sync_one(transport, unlocked, change.vault)?;
+                }
+                Err(e) => return Err(vault_error(e)),
+            }
+        }
+        Ok(false)
+    }
+
+    /// Sends the changes made while offline. Those that clash with changes
+    /// made elsewhere wait for the user. A lost connection leaves the rest
+    /// for next time.
+    fn flush(&mut self, transport: &impl Transport, unlocked: &Unlocked) -> Result<(), AppError> {
+        let todo: Vec<Change> = self
+            .queue(unlocked)?
+            .all()
+            .iter()
+            .filter(|c| !c.conflict)
+            .cloned()
+            .collect();
+        for change in &todo {
+            let sent = match self.send_change(transport, unlocked, change) {
+                Ok(sent) => sent,
+                Err(AppError::Offline) => break,
+                // The vault is gone or can no longer be edited here: the
+                // user decides what happens to the change.
+                Err(AppError::NotFound | AppError::ReadOnly) => false,
+                Err(e) => {
+                    self.save_queue(unlocked)?;
+                    return Err(e);
+                }
+            };
+            let queue = self.queue(unlocked)?;
+            if sent {
+                queue.remove(&change.vault, &change.item);
+            } else {
+                queue.mark_conflict(&change.vault, &change.item);
+            }
+            self.save_queue(unlocked)?;
+        }
+        Ok(())
+    }
+
+    /// One side of a conflict, showing the fields not found in `other`.
+    fn version(item_id: &ItemId, item: Option<&Item>, other: Option<&Item>, at_ms: u64) -> Version {
+        let fields = item.map_or_else(Vec::new, |item| {
+            let all: Vec<VersionField> = crate::items::view(item_id, item)
+                .fields
+                .into_iter()
+                .enumerate()
+                .map(|(index, field)| VersionField { index, field })
+                .collect();
+            let differs = |index: usize| {
+                let Ok(mine) = crate::items::field_at(item, index) else {
+                    return true;
+                };
+                !other.is_some_and(|o| {
+                    o.fields.iter().any(|f| {
+                        f.kind == mine.kind && f.label == mine.label && f.value == mine.value
+                    })
+                })
+            };
+            let changed: Vec<VersionField> =
+                all.iter().filter(|f| differs(f.index)).cloned().collect();
+            if changed.is_empty() { all } else { changed }
+        });
+        Version {
+            deleted: item.is_none(),
+            changed_ms: item.map_or(at_ms, |i| i.modified_ms.max(at_ms)),
+            fields,
+        }
+    }
+
+    /// Changes waiting, and those the user must settle.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error if the queue can't be read.
+    pub fn pending(&mut self, unlocked: &Unlocked) -> Result<PendingView, AppError> {
+        let changes = self.queue(unlocked)?.all().to_vec();
+        let mut conflicts = Vec::new();
+        for c in changes.iter().filter(|c| c.conflict) {
+            let theirs = self
+                .replica(&c.vault)
+                .ok()
+                .and_then(|r| r.items().ok())
+                .and_then(|items| items.into_iter().find(|(i, _)| *i == c.item))
+                .map(|(_, item)| item);
+            let title = c
+                .edit
+                .as_ref()
+                .or(theirs.as_ref())
+                .map(|i| crate::items::view(&c.item, i).title)
+                .unwrap_or_default();
+            conflicts.push(ConflictView {
+                vault: wire::b64(c.vault.as_bytes()),
+                item: wire::b64(c.item.as_bytes()),
+                title,
+                mine: Self::version(&c.item, c.edit.as_ref(), theirs.as_ref(), c.changed_ms),
+                theirs: Self::version(&c.item, theirs.as_ref(), c.edit.as_ref(), 0),
+            });
+        }
+        Ok(PendingView {
+            waiting: changes.iter().filter(|c| !c.conflict).count(),
+            conflicts,
+        })
+    }
+
+    /// One field's value from either version of a conflict, to compare.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NotFound`] if there is no such conflict or field.
+    pub fn conflict_field(
+        &mut self,
+        unlocked: &Unlocked,
+        id: &VaultId,
+        item_id: &ItemId,
+        mine: bool,
+        index: usize,
+    ) -> Result<Zeroizing<String>, AppError> {
+        let change = self
+            .queue(unlocked)?
+            .get(id, item_id)
+            .filter(|c| c.conflict)
+            .cloned()
+            .ok_or(AppError::NotFound)?;
+        let item = if mine {
+            change.edit.ok_or(AppError::NotFound)?
+        } else {
+            self.item_on_server(id, item_id)?
+        };
+        Ok(crate::items::field_at(&item, index)?.value.clone())
+    }
+
+    fn item_on_server(&self, id: &VaultId, item_id: &ItemId) -> Result<Item, AppError> {
+        self.replica(id)?
+            .items()
+            .map_err(vault_error)?
+            .into_iter()
+            .find(|(i, _)| i == item_id)
+            .map(|(_, item)| item)
+            .ok_or(AppError::NotFound)
+    }
+
+    /// Settles a conflict by keeping one version, or both.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NotFound`] if there is no such conflict, or a
+    /// server, network or verification error.
+    pub fn resolve(
+        &mut self,
+        transport: &impl Transport,
+        unlocked: &Unlocked,
+        id: VaultId,
+        item_id: ItemId,
+        keep: Keep,
+    ) -> Result<(), AppError> {
+        let change = self
+            .queue(unlocked)?
+            .get(&id, &item_id)
+            .filter(|c| c.conflict)
+            .cloned()
+            .ok_or(AppError::NotFound)?;
+        let live = self.revision(&id, &item_id).is_some();
+        match (keep, &change.edit) {
+            (Keep::Theirs, _) | (Keep::Both, None) => {}
+            (Keep::Mine, Some(edit)) => {
+                // A deleted item can't come back, so it returns as a new one.
+                self.put(transport, unlocked, id, live.then_some(item_id), edit)?;
+            }
+            (Keep::Mine, None) => {
+                if live {
+                    self.delete(transport, unlocked, id, &item_id)?;
+                }
+            }
+            (Keep::Both, Some(edit)) => {
+                self.put(transport, unlocked, id, None, edit)?;
+            }
+        }
+        self.queue(unlocked)?.remove(&id, &item_id);
+        self.save_queue(unlocked)
     }
 
     fn lookup(
@@ -619,7 +1019,7 @@ impl Vaults {
             self.order.retain(|v| *v != id);
             self.order.insert(0, id);
         }
-        Ok(())
+        self.flush(transport, unlocked)
     }
 
     /// Self-monitoring (spec section 9.5): checks, at most once a day, that
@@ -959,6 +1359,11 @@ impl Vaults {
     /// Loads the vaults from this computer's copies, without the server.
     /// Copies that no longer open are left out.
     pub fn load_local(&mut self, unlocked: &Unlocked) {
+        // A queue that can't be read is shown as empty rather than lost:
+        // its file stays until a change is saved over it.
+        if self.queue.is_none() {
+            self.queue = Queue::load(&self.files.dir, unlocked).ok();
+        }
         let Ok(dir) = fs::read_dir(&self.files.dir) else {
             return;
         };
@@ -1017,7 +1422,7 @@ impl Vaults {
                 VaultSummary {
                     id: wire::b64(id.as_bytes()),
                     name,
-                    items: replica.items().map(|i| i.len()).unwrap_or_default(),
+                    items: self.items(id).map(|i| i.len()).unwrap_or_default(),
                     writable: matches!(role, Some(Role::Owner | Role::Editor)),
                     owner: role == Some(Role::Owner),
                     shared: replica.state().is_some_and(|s| s.members.len() > 1),
@@ -1040,7 +1445,11 @@ impl Vaults {
     /// Returns [`AppError::NotFound`] for an unknown vault, or
     /// [`AppError::Tampered`] if an item fails its checks.
     pub fn items(&self, id: &VaultId) -> Result<Vec<(ItemId, Item)>, AppError> {
-        self.replica(id)?.items().map_err(vault_error)
+        let mut items = self.replica(id)?.items().map_err(vault_error)?;
+        if let Some(queue) = &self.queue {
+            queue.overlay(id, &mut items);
+        }
+        Ok(items)
     }
 
     /// One decrypted item.
@@ -1156,6 +1565,24 @@ impl Vaults {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn offline_changes_go_out_only_onto_the_version_they_were_made_from() {
+        use super::unchanged_since;
+        // Added here and still unknown to the server.
+        assert!(unchanged_since(0, None));
+        // Edited here; nobody else touched it.
+        assert!(unchanged_since(4, Some((4, false))));
+        // Changed elsewhere meanwhile.
+        assert!(!unchanged_since(4, Some((5, false))));
+        // Deleted elsewhere meanwhile.
+        assert!(!unchanged_since(4, Some((5, true))));
+        // The server lost or never had it.
+        assert!(!unchanged_since(4, None));
+        // An ID clash with an item added elsewhere.
+        assert!(!unchanged_since(0, Some((1, false))));
+    }
+
     use super::*;
 
     #[test]

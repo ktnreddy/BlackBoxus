@@ -40,8 +40,9 @@ impl Default for Settings {
     }
 }
 
-/// The auto-lock times on offer, in minutes.
-pub const AUTO_LOCK_CHOICES: [u32; 6] = [1, 5, 10, 15, 30, 60];
+/// The auto-lock times on offer, in minutes. 0 means as soon as the app
+/// is left (phones only).
+pub const AUTO_LOCK_CHOICES: [u32; 7] = [0, 1, 5, 10, 15, 30, 60];
 const SERVICE: &str = "BlackBoxus";
 const FORMAT: u32 = 1;
 
@@ -119,8 +120,26 @@ fn platform_store() -> Result<Store, AppError> {
     }
 }
 
+/// Android's Keystore holds the key that encrypts each entry, in hardware
+/// where the phone has it. Without it, entries are kept in memory.
+#[cfg(all(target_os = "android", not(test)))]
+fn platform_store() -> Result<Store, AppError> {
+    match android_native_keyring_store::Store::new() {
+        Ok(store) => Ok(store),
+        Err(_) => memory_store(),
+    }
+}
+
 /// Tests, and other systems, keep entries in memory.
-#[cfg(any(test, not(any(windows, target_os = "macos", target_os = "linux"))))]
+#[cfg(any(
+    test,
+    not(any(
+        windows,
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android"
+    ))
+))]
 fn platform_store() -> Result<Store, AppError> {
     memory_store()
 }

@@ -10,7 +10,15 @@ export interface AppStatus {
   account: { email: string } | null;
   locked: boolean;
   offline: boolean;
-  hello: { available: boolean; enabled: boolean; needs_password: boolean };
+  hello: {
+    available: boolean;
+    enabled: boolean;
+    needs_password: boolean;
+    /** The sensor is there but no fingerprint, face or screen lock is set up yet. */
+    setup_needed: boolean;
+  };
+  /** A phone: no browser extension, and the window is narrow. */
+  mobile: boolean;
 }
 
 /** An error from the Rust side, safe to show to the user. */
@@ -51,6 +59,8 @@ export interface Rating {
   acceptable: boolean;
   chars: number;
   min_chars: number;
+  /** Roughly how long a slow-hash offline attack would take, e.g. "centuries". */
+  guess_time: string;
   hint: string | null;
 }
 
@@ -98,6 +108,12 @@ export interface ItemSummary {
   title: string;
   subtitle: string;
   modified_ms: number;
+  /** It has a one-time code secret. */
+  has_code: boolean;
+  /** The website's host name, such as "gmail.com", if it has one. */
+  site: string | null;
+  /** A change made offline and not yet sent. */
+  pending: "new" | "edited" | "conflict" | null;
 }
 
 export interface FieldView {
@@ -134,8 +150,41 @@ export function syncVaults(): Promise<{
   offline: boolean;
   unknown_keys: boolean;
   emergency_request: GrantView | null;
+  /** Changes made offline, still to be sent. */
+  waiting: number;
+  /** Items changed both here and elsewhere, for the user to settle. */
+  conflicts: number;
 }> {
   return invoke("sync_vaults");
+}
+
+/** One version of an item in a conflict. */
+export interface ConflictVersion {
+  deleted: boolean;
+  changed_ms: number;
+  /** The fields that differ from the other version. */
+  fields: (FieldView & { index: number })[];
+}
+
+/** An item changed both on this device while offline and elsewhere. */
+export interface Conflict {
+  vault: string;
+  item: string;
+  title: string;
+  mine: ConflictVersion;
+  theirs: ConflictVersion;
+}
+
+export function pendingChanges(): Promise<{ waiting: number; conflicts: Conflict[] }> {
+  return invoke("pending_changes");
+}
+
+export function conflictField(vault: string, item: string, mine: boolean, index: number): Promise<string> {
+  return invoke<string>("conflict_field", { vault, item, mine, index });
+}
+
+export function resolveConflict(vault: string, item: string, keep: "mine" | "theirs" | "both"): Promise<void> {
+  return invoke("resolve_conflict", { vault, item, keep });
 }
 
 // `owner` reads the vaults of an account opened as its trusted contact.
@@ -255,8 +304,36 @@ export interface ImportProgress {
   finished: boolean;
 }
 
-export function importChooseFile(): Promise<{ file_name: string; preview: ImportPreview } | null> {
+export function importChooseFile(): Promise<{
+  file_name: string;
+  preview: ImportPreview;
+  can_delete: boolean;
+} | null> {
   return invoke("import_choose_file");
+}
+
+/** Scans a QR code with the phone's camera and returns its text. */
+export function scanCode(): Promise<string> {
+  return invoke<string>("scan_code");
+}
+
+export function cancelScan(): Promise<void> {
+  return invoke<void>("cancel_scan");
+}
+
+/** Whether BlackBoxus is the phone's autofill service; null on desktops. */
+export function autofillStatus(): Promise<boolean | null> {
+  return invoke<boolean | null>("autofill_status");
+}
+
+/** Opens the phone's setting for choosing the autofill service. */
+export function autofillSettings(): Promise<void> {
+  return invoke<void>("autofill_settings");
+}
+
+/** How many of the chosen file's items are already in `vault` and will be left out. */
+export function importDuplicates(vault: string): Promise<number> {
+  return invoke<number>("import_duplicates", { vault });
 }
 
 export function importStart(vault: string): Promise<void> {
@@ -466,4 +543,48 @@ export function openEmergency(sharingId: string): Promise<VaultSummary[]> {
 
 export function closeEmergency(): Promise<void> {
   return invoke<void>("close_emergency");
+}
+
+/** A login that needs attention in the Security tab. */
+export interface HealthFinding {
+  vault: string;
+  vault_name: string;
+  item: string;
+  title: string;
+  subtitle: string;
+  weak: boolean;
+  /** How many other logins use the same password. */
+  reused: number;
+  /** Times seen in known breaches, if checked and found. */
+  leaked: number | null;
+}
+
+/** A login whose website offers one-time codes it doesn't have yet. */
+export interface TwoStep {
+  vault: string;
+  vault_name: string;
+  item: string;
+  title: string;
+  subtitle: string;
+  site: string;
+}
+
+export interface Health {
+  logins: number;
+  findings: HealthFinding[];
+  leaks_checked: boolean;
+  score: number;
+  /** Advice, not counted in the score. */
+  two_step: TwoStep[];
+}
+
+/** Checks saved passwords on this device. With `checkLeaks`, also asks
+ *  Have I Been Pwned using the first 5 characters of each SHA-1 hash. */
+export function passwordHealth(checkLeaks: boolean): Promise<Health> {
+  return invoke<Health>("password_health", { checkLeaks });
+}
+
+/** Opens an item's website in the browser (http and https only). */
+export function openWebsite(vault: string, item: string): Promise<void> {
+  return invoke<void>("open_website", { vault, item });
 }

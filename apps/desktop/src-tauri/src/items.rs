@@ -69,6 +69,13 @@ pub struct ItemSummary {
     pub subtitle: String,
     /// Last change, Unix milliseconds.
     pub modified_ms: u64,
+    /// It has a one-time code secret.
+    pub has_code: bool,
+    /// The website's host name, such as "gmail.com", if it has one.
+    pub site: Option<String>,
+    /// A change made offline and not yet sent: "new", "edited" or
+    /// "conflict".
+    pub pending: Option<&'static str>,
 }
 
 /// One field of an item, as shown.
@@ -130,10 +137,10 @@ pub struct ItemInput {
 
 /// The list entry for an item.
 pub fn summary(id: &ItemId, item: &Item) -> ItemSummary {
-    let subtitle = first(item, FieldKind::Username)
-        .or_else(|| first(item, FieldKind::Url))
-        .or_else(|| first(item, FieldKind::CardholderName))
-        .map(str::to_owned)
+    let subtitle = card_line(item)
+        .or_else(|| first(item, FieldKind::Username).map(str::to_owned))
+        .or_else(|| first(item, FieldKind::Url).map(str::to_owned))
+        .or_else(|| first(item, FieldKind::CardholderName).map(str::to_owned))
         .unwrap_or_else(|| match item.item_type {
             ItemType::SecureNote => "Secure note".into(),
             ItemType::Card => "Card".into(),
@@ -149,6 +156,57 @@ pub fn summary(id: &ItemId, item: &Item) -> ItemSummary {
             .to_owned(),
         subtitle,
         modified_ms: item.modified_ms,
+        has_code: first(item, FieldKind::TotpSecret).is_some(),
+        site: website(item).as_deref().and_then(host),
+        pending: None,
+    }
+}
+
+/// The host name of a web link, without "www.", a port or sign-in details.
+fn host(url: &str) -> Option<String> {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let name = authority.split(':').next().unwrap_or_default();
+    let name = name.strip_prefix("www.").unwrap_or(name);
+    (!name.is_empty()).then(|| name.to_ascii_lowercase())
+}
+
+/// A card's list line: the last four digits and the expiry, like the
+/// card itself shows.
+fn card_line(item: &Item) -> Option<String> {
+    if item.item_type != ItemType::Card {
+        return None;
+    }
+    let digits: Vec<char> = first(item, FieldKind::CardNumber)?
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect();
+    let last4: String = digits.iter().skip(digits.len().saturating_sub(4)).collect();
+    if last4.is_empty() {
+        return None;
+    }
+    Some(match first(item, FieldKind::CardExpiry) {
+        Some(expiry) => format!("•••• {last4} · expires {expiry}"),
+        None => format!("•••• {last4}"),
+    })
+}
+
+/// The item's website as a link to open: http or https only, with
+/// `https://` added when no scheme is given.
+pub fn website(item: &Item) -> Option<String> {
+    let text = first(item, FieldKind::Url)?.trim();
+    if text.is_empty() || text.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return None;
+    }
+    let lower = text.to_ascii_lowercase();
+    if lower.starts_with("https://") || lower.starts_with("http://") {
+        Some(text.to_owned())
+    } else if text.contains("://") || lower.starts_with("javascript:") || lower.starts_with("data:")
+    {
+        None
+    } else {
+        Some(format!("https://{text}"))
     }
 }
 
@@ -272,6 +330,57 @@ mod tests {
 
         let s = summary(&id, &login());
         assert_eq!(s.subtitle, "alex.r@example.com");
+    }
+
+    #[test]
+    fn websites_open_only_as_web_links() {
+        let with = |url: &str| Item {
+            fields: vec![Field::new(FieldKind::Url, url)],
+            ..login()
+        };
+        assert_eq!(
+            website(&login()).as_deref(),
+            Some("https://northwind.example")
+        );
+        assert_eq!(
+            website(&with("github.com")).as_deref(),
+            Some("https://github.com")
+        );
+        assert_eq!(
+            website(&with("http://intranet.local")).as_deref(),
+            Some("http://intranet.local")
+        );
+        assert_eq!(website(&with("javascript:alert(1)")), None);
+        assert_eq!(website(&with("file:///etc/passwd")), None);
+        assert_eq!(website(&with("intent://scan#Intent;end")), None);
+        assert_eq!(website(&with("a b.com")), None);
+        assert_eq!(
+            host("https://www.Gmail.com/inbox?x=1").as_deref(),
+            Some("gmail.com")
+        );
+        assert_eq!(
+            host("https://me:pw@intranet.local:8443#a").as_deref(),
+            Some("intranet.local")
+        );
+        assert_eq!(host("https://"), None);
+    }
+
+    #[test]
+    fn cards_list_their_last_four_digits() {
+        let card = Item {
+            item_type: ItemType::Card,
+            created_ms: 1,
+            modified_ms: 2,
+            fields: vec![
+                Field::new(FieldKind::Title, "Visa debit"),
+                Field::new(FieldKind::CardholderName, "Alex Rivera"),
+                Field::new(FieldKind::CardNumber, "4242 4242 4242 4242"),
+                Field::new(FieldKind::CardExpiry, "08/29"),
+            ],
+        };
+        let s = summary(&ItemId::from_bytes([2; 16]), &card);
+        assert_eq!(s.subtitle, "•••• 4242 · expires 08/29");
+        assert!(!s.has_code);
     }
 
     #[test]

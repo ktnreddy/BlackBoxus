@@ -9,7 +9,7 @@
     onrecovered,
     onback,
   }: {
-    /** The account already on this computer, whose address is fixed. */
+    /** The account already on this device, whose address is fixed. */
     knownEmail?: string | null;
     onrecovered: (created: Created) => void;
     onback: () => void;

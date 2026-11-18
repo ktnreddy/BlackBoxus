@@ -51,6 +51,8 @@ pub struct AppStatus {
     pub offline: bool,
     /// Windows Hello unlock.
     pub hello: HelloStatus,
+    /// Whether this is a phone, where there is no browser extension.
+    pub mobile: bool,
 }
 
 #[derive(Default)]
@@ -150,6 +152,7 @@ impl AppState {
             locked: inner.session.is_none(),
             offline: inner.offline,
             hello: self.device.status(account_id.as_ref(), now_ms()),
+            mobile: cfg!(any(target_os = "android", target_os = "ios")),
         }
     }
 
@@ -197,6 +200,11 @@ impl AppState {
     /// Records whether the last sync reached the server.
     pub fn set_offline(&self, offline: bool) {
         self.inner().offline = offline;
+    }
+
+    /// Whether the last sync failed to reach the server.
+    pub fn is_offline(&self) -> bool {
+        self.inner().offline
     }
 
     /// Fails with [`AppError::ReadOnlyOffline`] while offline, before any

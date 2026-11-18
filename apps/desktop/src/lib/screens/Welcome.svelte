@@ -18,7 +18,7 @@
   <section class="stack hero">
     <h1 class="display">Only you can<br />open <span class="hi">your vaults.</span></h1>
     <p class="lede">
-      Everything is encrypted on this computer before it is synced. Nobody else can read it, not
+      Everything is encrypted on this device before it is synced. Nobody else can read it, not
       even us.
     </p>
     <div class="row">

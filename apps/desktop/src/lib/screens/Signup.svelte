@@ -51,7 +51,7 @@
       steps={[
         {
           title: "Choose a master password",
-          detail: "It never leaves this computer. Nobody can reset it, not even us.",
+          detail: "It never leaves this device. Nobody can reset it, not even us.",
         },
         {
           title: "Save your Emergency Kit",
@@ -59,7 +59,7 @@
         },
         {
           title: "Add your first passwords",
-          detail: "Everything is encrypted on this computer before it is synced.",
+          detail: "Everything is encrypted on this device before it is synced.",
         },
       ]}
     />

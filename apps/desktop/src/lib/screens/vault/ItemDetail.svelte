@@ -3,6 +3,7 @@
   import TotpField from "./TotpField.svelte";
   import {
     copyField,
+    openWebsite,
     copyText,
     deleteItem,
     errorMessage,
@@ -223,6 +224,23 @@
                 <Icon name="copy" size={15} />Copy
               </button>
             {:else}
+              {#if f.kind === "url" && owner === undefined}
+                <button
+                  type="button"
+                  class="icon-btn"
+                  aria-label="Open website"
+                  title="Open in your browser"
+                  onclick={async () => {
+                    try {
+                      await openWebsite(vault, itemId);
+                    } catch (e) {
+                      onnotice(errorMessage(e));
+                    }
+                  }}
+                >
+                  <Icon name="globe" />
+                </button>
+              {/if}
               <button
                 type="button"
                 class="icon-btn"

@@ -50,9 +50,9 @@
 
 <main class="glow page split">
   <section class="stack">
-    <h1 class="display">Sign in on<br /><span class="hi">this computer.</span></h1>
+    <h1 class="display">Sign in on<br /><span class="hi">this device.</span></h1>
     <p class="lede">
-      You'll need your Emergency Kit. The Secret Key in it is stored on this computer, so you only
+      You'll need your Emergency Kit. The Secret Key in it is stored on this device, so you only
       type it once.
     </p>
   </section>

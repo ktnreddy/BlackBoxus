@@ -221,16 +221,18 @@
       </button>
     </div>
 
+    <!-- Phones have no Windows Hello and no browser extension. -->
+    {#if !status.mobile}
     <div class="setting">
       <div class="text">
         <span class="name"><Icon name="hello" size={18} />Unlock with Windows Hello</span>
         <span class="small">
           {#if status.hello.available}
             Use your face, fingerprint or PIN instead of typing your master password. You'll still
-            enter the master password every 14 days. The key stays in this computer's security chip
+            enter the master password every 14 days. The key stays in this device's security chip
             and never leaves it.
           {:else}
-            Windows Hello isn't set up on this computer. Turn it on in Windows Settings, under
+            Windows Hello isn't set up on this device. Turn it on in Windows Settings, under
             Accounts, Sign-in options.
           {/if}
         </span>
@@ -246,6 +248,7 @@
         />
       </label>
     </div>
+    {/if}
 
     <div class="setting column">
       <div class="text">
@@ -330,11 +333,12 @@
       {/if}
     </div>
 
+    {#if !status.mobile}
     <div class="setting">
       <div class="text">
         <span class="name"><Icon name="globe" size={18} />Browser extension</span>
         <span class="small">
-          Lets the BlackBoxus extension in Chrome, Edge or Brave fill logins on this computer. It
+          Lets the BlackBoxus extension in Chrome, Edge, Brave or Firefox fill logins on this device. It
           asks this app for one login at a time, only when you click fill, and only while your
           vaults are unlocked. Turning it off disconnects every browser.
         </span>
@@ -371,6 +375,7 @@
         />
       </label>
     </div>
+    {/if}
 
     <div class="setting column">
       <div class="text">
@@ -424,9 +429,9 @@
 
     <div class="setting column">
       <div class="text">
-        <span class="name"><Icon name="arrowLeft" size={18} />Sign out of this computer</span>
+        <span class="name"><Icon name="arrowLeft" size={18} />Sign out of this device</span>
         <span class="small">
-          Removes your account, Secret Key and vault copies from this computer. Your vaults stay safe
+          Removes your account, Secret Key and vault copies from this device. Your vaults stay safe
           on the server; sign in again with your Emergency Kit.
         </span>
       </div>

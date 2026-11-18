@@ -126,19 +126,10 @@ a:hover {
   color: var(--text);
 }
 .mark {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  background: var(--text);
-  display: grid;
-  place-items: center;
+  width: 30px;
+  height: 30px;
+  display: block;
   flex: none;
-}
-.mark i {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-  background: var(--accent);
 }
 .nav {
   display: flex;

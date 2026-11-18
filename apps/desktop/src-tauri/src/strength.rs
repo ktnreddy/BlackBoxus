@@ -26,6 +26,9 @@ pub struct Rating {
     pub min_chars: usize,
     /// Advice, if any.
     pub hint: Option<String>,
+    /// Roughly how long an offline attack against a slow password hash
+    /// would take, such as "centuries". Empty when nothing is typed.
+    pub guess_time: String,
 }
 
 /// Rates `password`. `context` holds words an attacker would try first,
@@ -47,8 +50,17 @@ pub fn rate(password: &str, context: &[&str]) -> Rating {
         (_, 3) => "Strong",
         _ => "Very strong",
     };
+    let guess_time = if chars == 0 {
+        String::new()
+    } else {
+        entropy
+            .crack_times()
+            .offline_slow_hashing_1e4_per_second()
+            .to_string()
+    };
     Rating {
         score,
+        guess_time,
         label,
         acceptable: chars >= MIN_NEW_PASSWORD_CHARS && score >= MIN_SCORE,
         chars,
@@ -70,6 +82,8 @@ mod tests {
         let strong = rate("lantern-orbit-velvet-quarry", &[]);
         assert!(strong.acceptable);
         assert_eq!(strong.chars, 27);
+        assert!(!strong.guess_time.is_empty());
+        assert!(rate("", &[]).guess_time.is_empty());
     }
 
     #[test]

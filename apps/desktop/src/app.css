@@ -311,3 +311,32 @@ textarea::placeholder {
 .error {
   margin: 0;
 }
+
+/* Phones and narrow windows: one column, room for the system bars. */
+@media (max-width: 760px) {
+  .page {
+    align-items: start;
+    padding: 12px 18px calc(32px + env(safe-area-inset-bottom));
+  }
+  .page.split {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 28px;
+  }
+  /* The form first; the explanation follows it. */
+  .page.split > .form-card {
+    order: -1;
+  }
+  .form-card {
+    padding: 22px;
+  }
+  .display {
+    font-size: 36px;
+  }
+  .row {
+    flex-wrap: wrap;
+  }
+  /* Bigger targets for fingers. */
+  .btn.sm {
+    height: 40px;
+  }
+}

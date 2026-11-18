@@ -296,8 +296,73 @@ pub fn parse(bytes: &[u8], now_ms: u64) -> Result<Parsed, AppError> {
     })
 }
 
+/// A fingerprint of an item's content: its type, title and fields, in any
+/// order, ignoring when it was made. Equal fingerprints mean the same item.
+fn content_key(item: &Item) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut fields: Vec<[u8; 32]> = item
+        .fields
+        .iter()
+        .map(|f| {
+            let mut h = Sha256::new();
+            h.update(format!("{:?}", f.kind).as_bytes());
+            h.update([0]);
+            h.update((f.label.len() as u64).to_be_bytes());
+            h.update(f.label.as_bytes());
+            h.update(f.value.as_bytes());
+            h.finalize().into()
+        })
+        .collect();
+    fields.sort_unstable();
+    let mut h = Sha256::new();
+    h.update(format!("{:?}", item.item_type).as_bytes());
+    for f in &fields {
+        h.update(f);
+    }
+    h.finalize().into()
+}
+
+/// For each item in `new`, whether exactly the same item is already in
+/// `existing`, or earlier in `new` itself. Importing the same file twice
+/// then adds nothing the second time; an item that differs at all (a
+/// changed password, say) is still imported.
+pub fn already_there(new: &[Item], existing: &[Item]) -> Vec<bool> {
+    let mut seen: std::collections::HashSet<[u8; 32]> = existing.iter().map(content_key).collect();
+    new.iter()
+        .map(|item| !seen.insert(content_key(item)))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn items_already_in_the_vault_are_found() {
+        let login = |title: &str, password: &str, at: u64| Item {
+            item_type: ItemType::Login,
+            created_ms: at,
+            modified_ms: at,
+            fields: vec![
+                Field::new(FieldKind::Title, title),
+                Field::new(FieldKind::Username, "sam"),
+                Field::new(FieldKind::Password, password),
+            ],
+        };
+        let mut reordered = login("Mail", "pw1", 9);
+        reordered.fields.reverse();
+        let existing = vec![login("Mail", "pw1", 1)];
+        let new = vec![
+            reordered,               // same content, other order and time
+            login("Mail", "pw2", 2), // a changed password is imported
+            login("Bank", "pw3", 3), // new
+            login("Bank", "pw3", 4), // a repeat within the file
+        ];
+        assert_eq!(
+            super::already_there(&new, &existing),
+            vec![true, false, false, true]
+        );
+    }
+
     use super::*;
 
     fn field(item: &Item, kind: FieldKind) -> Option<&str> {

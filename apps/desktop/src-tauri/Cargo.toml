@@ -1,6 +1,6 @@
 [package]
 name = "blackboxus-desktop"
-description = "The BlackBoxus desktop app for Windows"
+description = "The BlackBoxus app for Windows, Linux and Android"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,7 +10,8 @@ publish.workspace = true
 
 [lib]
 name = "blackboxus_desktop"
-crate-type = ["rlib"]
+# The static and dynamic libraries are what the Android app loads.
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
 name = "blackboxus"
@@ -20,22 +21,14 @@ path = "src/main.rs"
 tauri-build = { version = "2.7.4", features = ["isolation"] }
 
 [dependencies]
-# Encrypts messages to the browser extension (spec section 14).
-aes-gcm = "0.11.1"
-# Copies secrets with Windows told to keep them out of clipboard history
-# and cloud sync.
-arboard = { version = "3.6", default-features = false }
 client-core = { version = "0.0.1", path = "../../../crates/client-core" }
 csv = "1.4.0"
 getrandom = "0.4.3"
 hkdf = "0.13.0"
 hmac = "0.13.0"
-# The local socket to the browser's native messaging host.
-interprocess = "2.4.8"
 keyring-core = "1.0.1"
-# The pairing key exchange with the browser extension.
-p256 = { version = "0.14.0", features = ["ecdh"] }
-# The Public Suffix List, to match logins to sites.
+# The Public Suffix List, to match logins to sites (browser extension and
+# Android autofill).
 psl = "2.1.253"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -43,17 +36,47 @@ sha1 = "0.11.0"
 sha2 = "0.11.1"
 tauri = { version = "2.12.5", features = ["isolation"] }
 tauri-plugin-dialog = "2.8.4"
-tauri-plugin-single-instance = "2.5.5"
+# Opens an item's website in the browser; called only from Rust.
+tauri-plugin-opener = "2.7.2"
 thiserror = "2"
 # HTTPS with rustls and Mozilla's root certificates; no system TLS library.
 ureq = { version = "3.5.2", default-features = false, features = ["rustls"] }
 # The server's "something changed" hints, over the same rustls stack.
-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 url = "2.5.8"
+tungstenite = { version = "0.30.0", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 vault-core = { version = "0.0.1", path = "../../../crates/vault-core" }
 wire = { version = "0.0.1", path = "../../../crates/wire" }
 zeroize = { version = "1.9", features = ["serde"] }
 zxcvbn = "3.1.1"
+
+# The browser extension, the system clipboard and single-instance launches
+# exist only on desktops.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# Encrypts messages to the browser extension (spec section 14).
+aes-gcm = "0.11.1"
+# Copies secrets with Windows told to keep them out of clipboard history
+# and cloud sync.
+arboard = { version = "3.6", default-features = false }
+# The local socket to the browser's native messaging host.
+interprocess = "2.4.8"
+# The pairing key exchange with the browser extension.
+p256 = { version = "0.14.0", features = ["ecdh"] }
+tauri-plugin-single-instance = "2.5.5"
+
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+# The phone's clipboard, with copies marked sensitive so Android hides them
+# from the clipboard preview.
+tauri-plugin-clipboard-manager = "2.5.0"
+# Reads files picked through Android's document picker.
+tauri-plugin-fs = "2.7.1"
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Android's Keystore, which holds the key that encrypts stored entries.
+android-native-keyring-store = "1.0.0"
+# Fingerprint unlock: a Keystore key that works only after a strong
+# biometric check.
+tauri-plugin-biometric = "2.5.0"
+tauri-plugin-barcode-scanner = "2.5.3"
 
 [target.'cfg(windows)'.dependencies]
 # Where each browser finds the native messaging host.

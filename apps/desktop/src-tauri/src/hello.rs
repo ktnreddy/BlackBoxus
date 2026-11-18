@@ -15,6 +15,11 @@ use crate::error::AppError;
 pub trait HelloKeys: Send + Sync {
     /// Whether it can be used on this computer.
     fn available(&self) -> bool;
+    /// Whether the hardware is there but nothing is set up yet (no
+    /// fingerprint, face or screen lock), so the user can be told how.
+    fn setup_needed(&self) -> bool {
+        false
+    }
     /// Creates (or replaces) the named key, asking the user to verify.
     ///
     /// # Errors
@@ -32,7 +37,8 @@ pub trait HelloKeys: Send + Sync {
     fn delete(&self, name: &str);
 }
 
-/// The provider for this build.
+/// The provider for this build. Android uses [`fingerprint`] instead.
+#[cfg(not(target_os = "android"))]
 pub fn provider() -> Box<dyn HelloKeys> {
     #[cfg(windows)]
     {
@@ -48,18 +54,25 @@ pub fn provider() -> Box<dyn HelloKeys> {
     }
 }
 
+/// Fingerprint (or face) unlock on Android, keeping its secret in files
+/// in `dir`.
+#[cfg(target_os = "android")]
+pub fn fingerprint(app: tauri::AppHandle, dir: std::path::PathBuf) -> Box<dyn HelloKeys> {
+    Box::new(android::Fingerprint::new(app, dir))
+}
+
 /// The development stand-in, for tests.
-#[cfg(all(test, not(windows)))]
+#[cfg(all(test, not(any(windows, target_os = "android"))))]
 pub fn fake() -> Box<dyn HelloKeys> {
     Box::new(fake::FakeHello::default())
 }
 
 /// No Windows Hello: macOS and Linux builds, until their own unlock methods
 /// exist.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "android")))]
 struct Unavailable;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "android")))]
 impl HelloKeys for Unavailable {
     fn available(&self) -> bool {
         false
@@ -158,7 +171,7 @@ mod windows_hello {
 /// A stand-in for development on Linux, enabled with
 /// `BLACKBOXUS_FAKE_HELLO=1` in debug builds only. It has no user check
 /// and its keys live in memory.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "android")))]
 mod fake {
     use std::collections::HashMap;
     use std::sync::{Mutex, PoisonError};
@@ -203,6 +216,157 @@ mod fake {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .remove(name);
+        }
+    }
+}
+
+/// Android's fingerprint or face unlock, through the Keystore.
+///
+/// Android has no deterministic signing key like Windows Hello's, so each
+/// credential is a random 32-byte secret, encrypted with an AES-256-GCM
+/// Keystore key that only works right after a strong biometric check
+/// (`BiometricPrompt` with a `CryptoObject`). Android deletes that key when
+/// someone adds a new fingerprint or face, which turns fingerprint unlock
+/// off until it is set up again with the master password. The "signature"
+/// is HMAC-SHA256 of the challenge under the secret: the same every time,
+/// and only computable after the biometric check.
+#[cfg(target_os = "android")]
+mod android {
+    use std::path::PathBuf;
+    use std::sync::{Mutex, PoisonError};
+
+    use hmac::{Hmac, KeyInit, Mac};
+    use sha2::{Digest, Sha256};
+    use tauri_plugin_biometric::{AuthOptions, BiometricExt};
+    use zeroize::Zeroizing;
+
+    use super::HelloKeys;
+    use crate::error::AppError;
+    use crate::storage::write_atomically;
+
+    pub(super) struct Fingerprint {
+        app: tauri::AppHandle,
+        dir: PathBuf,
+        /// The secret just created, so turning unlock on needs one
+        /// fingerprint check, not two. Taken by the next `sign`.
+        fresh: Mutex<Option<(String, Zeroizing<[u8; 32]>)>>,
+    }
+
+    impl Fingerprint {
+        pub(super) fn new(app: tauri::AppHandle, dir: PathBuf) -> Self {
+            Self {
+                app,
+                dir,
+                fresh: Mutex::new(None),
+            }
+        }
+
+        /// The file holding the encrypted secret for `name`.
+        fn file_name(name: &str) -> String {
+            let digest = Sha256::digest(name.as_bytes());
+            let short: Vec<u8> = digest.iter().take(12).copied().collect();
+            format!("fingerprint-{}.txt", wire::b64(&short))
+        }
+
+        fn options(title: &str) -> AuthOptions {
+            AuthOptions {
+                title: Some(title.to_owned()),
+                subtitle: Some("BlackBoxus".to_owned()),
+                cancel_title: Some("Use master password".to_owned()),
+                ..AuthOptions::default()
+            }
+        }
+    }
+
+    /// Sorts the plugin's failure into the app's errors, by the error
+    /// codes in its Android code (BiometricPlugin.kt).
+    fn failure(error: &tauri_plugin_biometric::Error) -> AppError {
+        let text = format!("{error:?}");
+        if text.contains("userCancel") || text.contains("systemCancel") {
+            AppError::HelloCancelled
+        } else if text.contains("biometryLockout") {
+            AppError::HelloLockedOut
+        } else if text.contains("biometryNotEnrolled") || text.contains("passcodeNotSet") {
+            AppError::HelloUnavailable
+        } else if text.contains("Failed to initialize the cipher")
+            || text.contains("Failed to decrypt")
+        {
+            // The Keystore key no longer opens: Android invalidates it when
+            // a fingerprint or face is added, or the screen lock removed.
+            AppError::HelloMissing
+        } else {
+            AppError::HelloUnavailable
+        }
+    }
+
+    impl HelloKeys for Fingerprint {
+        fn available(&self) -> bool {
+            self.app.biometric().status().is_ok_and(|s| s.is_available)
+        }
+
+        fn setup_needed(&self) -> bool {
+            self.app.biometric().status().is_ok_and(|s| {
+                !s.is_available
+                    && matches!(
+                        s.error_code.as_deref(),
+                        Some("biometryNotEnrolled" | "passcodeNotSet")
+                    )
+            })
+        }
+
+        fn create(&self, name: &str) -> Result<(), AppError> {
+            let mut secret = Zeroizing::new([0_u8; 32]);
+            getrandom::fill(secret.as_mut()).map_err(|_| AppError::Internal)?;
+            let plain = Zeroizing::new(wire::b64(secret.as_ref()));
+            let options = AuthOptions {
+                data_to_encrypt: Some(plain.to_string()),
+                ..Self::options("Turn on fingerprint unlock")
+            };
+            let sealed = self
+                .app
+                .biometric()
+                .biometric_cipher("Confirm it's you".to_owned(), options)
+                .map_err(|e| failure(&e))?;
+            write_atomically(&self.dir, &Self::file_name(name), sealed.data.as_bytes())?;
+            *self.fresh.lock().unwrap_or_else(PoisonError::into_inner) =
+                Some((name.to_owned(), secret));
+            Ok(())
+        }
+
+        fn sign(&self, name: &str, challenge: &[u8]) -> Result<Zeroizing<Vec<u8>>, AppError> {
+            let fresh = self
+                .fresh
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take()
+                .filter(|(n, _)| n == name);
+            let secret = if let Some((_, secret)) = fresh {
+                secret
+            } else {
+                let sealed = std::fs::read_to_string(self.dir.join(Self::file_name(name)))
+                    .map_err(|_| AppError::HelloMissing)?;
+                let options = AuthOptions {
+                    data_to_decrypt: Some(sealed),
+                    ..Self::options("Unlock BlackBoxus")
+                };
+                let opened = self
+                    .app
+                    .biometric()
+                    .biometric_cipher("Use your fingerprint".to_owned(), options)
+                    .map_err(|e| failure(&e))?;
+                let opened = Zeroizing::new(opened.data);
+                let bytes = wire::unb64_array::<32>(&opened).ok_or(AppError::HelloMissing)?;
+                Zeroizing::new(bytes)
+            };
+            let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret.as_ref())
+                .map_err(|_| AppError::Internal)?;
+            mac.update(challenge);
+            Ok(Zeroizing::new(mac.finalize().into_bytes().to_vec()))
+        }
+
+        fn delete(&self, name: &str) {
+            // Best effort: the file may already be gone.
+            let _ = std::fs::remove_file(self.dir.join(Self::file_name(name)));
         }
     }
 }
