@@ -4,6 +4,6 @@
   "license": "AGPL-3.0-or-later",
   "description": "Deployment tooling for the BlackBoxus server",
   "devDependencies": {
-    "wrangler": "4.162.0"
+    "wrangler": "4.166.0"
   }
 }
