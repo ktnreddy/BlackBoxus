@@ -11,7 +11,7 @@ publish.workspace = true
 [dependencies]
 base64ct = { version = "1.8", features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }
-vault-core = { version = "0.1.0", path = "../vault-core" }
+vault-core = { version = "0.2.0", path = "../vault-core" }
 
 [lints]
 workspace = true

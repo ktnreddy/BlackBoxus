@@ -12,13 +12,13 @@ publish.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-vault-core = { version = "0.1.0", path = "../vault-core" }
-wire = { version = "0.1.0", path = "../wire" }
+vault-core = { version = "0.2.0", path = "../vault-core" }
+wire = { version = "0.2.0", path = "../wire" }
 zeroize = "1.9"
 
 [dev-dependencies]
-server-core = { version = "0.1.0", path = "../server-core" }
-server-worker = { version = "0.1.0", path = "../server-worker" }
+server-core = { version = "0.2.0", path = "../server-core" }
+server-worker = { version = "0.2.0", path = "../server-worker" }
 
 [lints]
 workspace = true
