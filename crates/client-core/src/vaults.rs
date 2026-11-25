@@ -378,9 +378,28 @@ impl VaultReplica {
             .1)
     }
 
-    /// Every item, including the vault's details.
+    /// Every item this version can read, including the vault's details.
+    /// Items saved in a newer format are left out (see
+    /// [`VaultReplica::newer_items`]).
     fn all_items(&self) -> Result<Vec<(ItemId, Item)>> {
+        Ok(self.read_items()?.0)
+    }
+
+    /// How many items were saved by a newer version of the app, which this
+    /// one can't show or change (spec section 6.3).
+    ///
+    /// # Errors
+    ///
+    /// As [`VaultReplica::items`].
+    pub fn newer_items(&self) -> Result<usize> {
+        Ok(self.read_items()?.1)
+    }
+
+    /// The items this version can read, and how many it can't because they
+    /// are in a newer format.
+    fn read_items(&self) -> Result<(Vec<(ItemId, Item)>, usize)> {
         let state = self.state.as_ref().ok_or(ClientError::InvalidResponse)?;
+        let mut newer = 0_usize;
         let mut out = Vec::new();
         for (item_id, stored) in &self.items {
             let Some(envelope) = &stored.envelope else {
@@ -394,10 +413,13 @@ impl VaultReplica {
                 .keys
                 .get(&version)
                 .ok_or(ClientError::InvalidResponse)?;
-            let opened = open_item(envelope, &key.key, &self.vault_id, Some(item_id))?;
-            out.push((*item_id, opened.item));
+            match open_item(envelope, &key.key, &self.vault_id, Some(item_id)) {
+                Ok(opened) => out.push((*item_id, opened.item)),
+                Err(vault_core::Error::NewerItemFormat) => newer = newer.saturating_add(1),
+                Err(e) => return Err(e.into()),
+            }
         }
-        Ok(out)
+        Ok((out, newer))
     }
 
     // -- Writing -----------------------------------------------------------
@@ -868,8 +890,14 @@ impl VaultReplica {
             .get(&state.vault_key_version)
             .ok_or(ClientError::InvalidResponse)?;
         let mut operations = Vec::new();
+        let (items, newer) = self.read_items()?;
+        if newer > 0 {
+            // Leaving them under the old key would let a removed member
+            // keep reading them; only a newer app can re-encrypt them.
+            return Err(ClientError::NeedsUpdate);
+        }
         // The details too, so members added later can read the name.
-        for (item_id, item) in self.all_items()? {
+        for (item_id, item) in items {
             let current = state
                 .items
                 .get(&item_id)

@@ -74,6 +74,8 @@ A parser MUST reject: an unknown schema version, item type or field kind; invali
 
 Rejecting unknown types and kinds, instead of skipping them, prevents a silent loss of data: a client that dropped a field it did not understand would delete it the next time it saved the item. New types and kinds arrive with a new schema version.
 
+An item whose schema version is higher than the client supports was written by a newer client. It is authentic (it decrypted), so it is not an error in the vault: the client MUST keep it unchanged, MUST still show the vault's other items, and SHOULD tell the user that some items need a newer version of the app. Because the client cannot re-encrypt it, the client MUST refuse a vault key change (7.6) while the vault holds such an item, instead of leaving it under the old key.
+
 ### Padding
 
 Before encryption, the content is padded to hide its exact length:

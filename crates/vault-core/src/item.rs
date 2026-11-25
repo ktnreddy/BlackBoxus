@@ -297,7 +297,13 @@ impl Item {
     /// over-limit lengths, invalid UTF-8 and trailing bytes are rejected.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let mut r = Reader(bytes);
-        if r.u8()? != SCHEMA_VERSION {
+        let version = r.u8()?;
+        if version > SCHEMA_VERSION {
+            // Authentic (it decrypted), just newer: callers keep it as it
+            // is instead of treating the whole vault as unreadable.
+            return Err(Error::NewerItemFormat);
+        }
+        if version != SCHEMA_VERSION {
             return Err(Error::MalformedMessage);
         }
         let item_type = ItemType::from_code(r.u8()?).ok_or(Error::MalformedMessage)?;
@@ -610,6 +616,16 @@ mod tests {
             bad[pos] = value;
             assert!(Item::decode(&bad).is_err(), "pos {pos}");
         }
+    }
+
+    #[test]
+    fn a_newer_schema_is_told_apart_from_damage() {
+        let mut newer = item_bytes();
+        newer[0] = SCHEMA_VERSION + 1;
+        assert!(matches!(Item::decode(&newer), Err(Error::NewerItemFormat)));
+        let mut older = item_bytes();
+        older[0] = 0;
+        assert!(matches!(Item::decode(&older), Err(Error::MalformedMessage)));
     }
 
     fn item_bytes() -> Vec<u8> {

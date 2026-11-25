@@ -51,6 +51,12 @@ pub enum Error {
     #[error("malformed protocol message")]
     MalformedMessage,
 
+    /// An item was saved in a newer format than this version understands
+    /// (spec section 6.3). It opened and is authentic; it just can't be
+    /// shown or changed until the app is updated.
+    #[error("item saved by a newer version of the app")]
+    NewerItemFormat,
+
     /// Authentication failed. Deliberately does not say why: the password,
     /// Secret Key, account or server may be wrong.
     #[error("authentication failed")]

@@ -34,6 +34,11 @@ pub enum ClientError {
     #[error("not allowed for this item")]
     NotAllowed,
 
+    /// The vault holds items saved by a newer version of the app, and this
+    /// change needs every item: update the app first.
+    #[error("update the app to make this change")]
+    NeedsUpdate,
+
     /// A cryptographic check failed, or input was invalid.
     #[error(transparent)]
     Crypto(#[from] vault_core::Error),
