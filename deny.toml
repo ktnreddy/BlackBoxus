@@ -15,6 +15,9 @@ targets = [
 [advisories]
 version = 2
 yanked = "deny"
+# Flag unmaintained crates anywhere in the tree, not only those used
+# directly (cargo-deny 0.22 narrowed the default to the workspace's own).
+unmaintained = "all"
 ignore = [
   # crypto-bigint 0.5 comes in through elliptic-curve, which opaque-ke and
   # voprf use for generic traits only. BlackBoxus uses OPAQUE with
