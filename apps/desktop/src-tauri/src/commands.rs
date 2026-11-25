@@ -269,55 +269,65 @@ pub(crate) struct Synced {
 
 /// Syncs every vault with the server and lists them. Without a connection,
 /// lists this computer's copies instead, read-only.
+///
+/// The sync works on its own copy of the vaults, so the app stays usable
+/// while it talks to the server: reading, copying and locking don't wait.
+/// Changes wait for it to finish (see [`AppState::with_session`]).
 #[tauri::command]
 pub(crate) async fn sync_vaults(app: AppHandle) -> Result<Synced, AppError> {
     let handle = app.clone();
-    blocking(app, move |state| {
-        let offline =
-            state.with_session(|s| match s.vaults.sync(&state.transport, &s.unlocked) {
-                Ok(()) => Ok(false),
-                Err(AppError::Offline) => {
-                    s.vaults.load_local(&s.unlocked);
-                    Ok(true)
-                }
-                Err(e) => Err(e),
-            })?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = handle.state::<AppState>();
+        let _gate = state.sync_gate();
+        let (id, unlocked, mut synced) =
+            state.read_session(|s| Ok((s.id, s.unlocked.clone(), s.vaults.for_sync())))?;
+        let offline = match synced.sync(&state.transport, &unlocked) {
+            Ok(()) => false,
+            Err(AppError::Offline) => {
+                synced.load_local(&unlocked);
+                true
+            }
+            Err(e) => return Err(e),
+        };
+        let unknown_keys = if offline {
+            false
+        } else {
+            match synced.check_own_keys(&state.transport, &unlocked, now_ms()) {
+                // A lost connection only postpones the check.
+                Err(AppError::Offline) => false,
+                other => other?,
+            }
+        };
+        // A pending request from the trusted contact is shown on every
+        // sync, so the owner can deny it in time (spec section 11.6).
+        let emergency_request = if offline {
+            None
+        } else {
+            match crate::trusted::emergency_status(&state.transport, &unlocked) {
+                Ok(status) => crate::trusted::EmergencyView::from(&status)
+                    .contact
+                    .filter(|c| c.stage == "requested"),
+                Err(AppError::Offline) => None,
+                Err(e) => return Err(e),
+            }
+        };
         state.set_offline(offline);
-        state.with_session(|s| {
+        state.read_session(|s| {
+            // Locked meanwhile, and perhaps unlocked again: the synced copy
+            // belongs to a session that has ended.
+            if s.id != id {
+                return Err(AppError::Locked);
+            }
+            s.vaults.replace_with(synced);
             // Listen for changes while online, starting again after the
             // server refused an expired session and a new one was made.
             if !offline && s.live.as_ref().is_none_or(crate::live::Live::finished) {
                 s.live = crate::live::Live::start(
-                    handle.clone(),
+                    app.clone(),
                     state.transport.base(),
                     s.unlocked.session.authorization(),
                 );
             }
-            let unknown_keys = if offline {
-                false
-            } else {
-                match s
-                    .vaults
-                    .check_own_keys(&state.transport, &s.unlocked, now_ms())
-                {
-                    // A lost connection only postpones the check.
-                    Err(AppError::Offline) => false,
-                    other => other?,
-                }
-            };
-            // A pending request from the trusted contact is shown on every
-            // sync, so the owner can deny it in time (spec section 11.6).
-            let emergency_request = if offline {
-                None
-            } else {
-                match crate::trusted::emergency_status(&state.transport, &s.unlocked) {
-                    Ok(status) => crate::trusted::EmergencyView::from(&status)
-                        .contact
-                        .filter(|c| c.stage == "requested"),
-                    Err(AppError::Offline) => None,
-                    Err(e) => return Err(e),
-                }
-            };
             let pending = s.vaults.pending(&s.unlocked)?;
             Ok(Synced {
                 vaults: s.vaults.summaries(&s.unlocked),
@@ -330,6 +340,28 @@ pub(crate) async fn sync_vaults(app: AppHandle) -> Result<Synced, AppError> {
         })
     })
     .await
+    .map_err(|_| AppError::Internal)?
+}
+
+/// The vaults as this device has them, straight away and without the
+/// server, so the screens can show them while the first sync runs.
+#[tauri::command]
+pub(crate) fn local_vaults(state: State<'_, AppState>) -> Result<Synced, AppError> {
+    let offline = state.is_offline();
+    state.read_session(|s| {
+        if s.vaults.is_empty() {
+            s.vaults.load_local(&s.unlocked);
+        }
+        let pending = s.vaults.pending(&s.unlocked)?;
+        Ok(Synced {
+            vaults: s.vaults.summaries(&s.unlocked),
+            offline,
+            unknown_keys: false,
+            emergency_request: None,
+            waiting: pending.waiting,
+            conflicts: pending.conflicts.len(),
+        })
+    })
 }
 
 /// The vaults to read: the account's own, or with `owner`, those of the
@@ -359,7 +391,7 @@ pub(crate) fn list_items(
     owner: Option<String>,
 ) -> Result<Vec<ItemSummary>, AppError> {
     let id = vault_id(&vault)?;
-    state.with_session(|s| {
+    state.read_session(|s| {
         let vaults = vaults_of(s, owner.as_deref())?;
         let mut list: Vec<ItemSummary> = vaults
             .items(&id)?
@@ -384,7 +416,7 @@ pub(crate) fn get_item(
     owner: Option<String>,
 ) -> Result<ItemView, AppError> {
     let (id, item_id) = (vault_id(&vault)?, item_id(&item)?);
-    state.with_session(|s| {
+    state.read_session(|s| {
         Ok(items::view(
             &item_id,
             &vaults_of(s, owner.as_deref())?.item(&id, &item_id)?,
@@ -402,7 +434,7 @@ pub(crate) fn reveal_field(
     owner: Option<String>,
 ) -> Result<Zeroizing<String>, AppError> {
     let (id, item_id) = (vault_id(&vault)?, item_id(&item)?);
-    state.with_session(|s| {
+    state.read_session(|s| {
         let item = vaults_of(s, owner.as_deref())?.item(&id, &item_id)?;
         Ok(items::field_at(&item, index)?.value.clone())
     })
@@ -419,7 +451,7 @@ pub(crate) fn copy_field(
     owner: Option<String>,
 ) -> Result<(), AppError> {
     let (id, item_id) = (vault_id(&vault)?, item_id(&item)?);
-    let value = state.with_session(|s| {
+    let value = state.read_session(|s| {
         let item = vaults_of(s, owner.as_deref())?.item(&id, &item_id)?;
         Ok(items::field_at(&item, index)?.value.clone())
     })?;
@@ -488,7 +520,7 @@ pub(crate) async fn delete_item(
 /// Changes made offline that are waiting, and conflicts to settle.
 #[tauri::command]
 pub(crate) fn pending_changes(state: State<'_, AppState>) -> Result<PendingView, AppError> {
-    state.with_session(|s| s.vaults.pending(&s.unlocked))
+    state.read_session(|s| s.vaults.pending(&s.unlocked))
 }
 
 /// One field of either version of a conflict, to compare them.
@@ -501,7 +533,7 @@ pub(crate) fn conflict_field(
     index: usize,
 ) -> Result<Zeroizing<String>, AppError> {
     let (id, item_id) = (vault_id(&vault)?, item_id(&item)?);
-    state.with_session(|s| {
+    state.read_session(|s| {
         s.vaults
             .conflict_field(&s.unlocked, &id, &item_id, mine, index)
     })
@@ -533,9 +565,14 @@ pub(crate) async fn scan_code(app: AppHandle) -> Result<String, AppError> {
     #[cfg(mobile)]
     {
         let handle = app.clone();
-        tauri::async_runtime::spawn_blocking(move || crate::scanner::scan(&handle))
-            .await
-            .map_err(|_| AppError::Internal)?
+        tauri::async_runtime::spawn_blocking(move || {
+            // The camera permission and the camera itself pause the app.
+            let state = handle.state::<AppState>();
+            let _screen = state.away.system_screen();
+            crate::scanner::scan(&handle)
+        })
+        .await
+        .map_err(|_| AppError::Internal)?
     }
     #[cfg(not(mobile))]
     {
@@ -557,13 +594,14 @@ pub(crate) fn cancel_scan(app: AppHandle) {
 /// such thing (desktops), otherwise whether it is the phone's autofill
 /// service.
 #[tauri::command]
-pub(crate) async fn autofill_status(app: AppHandle) -> Option<bool> {
+pub(crate) async fn autofill_status(app: AppHandle) -> Option<serde_json::Value> {
     #[cfg(target_os = "android")]
     {
         let handle = app.clone();
-        tauri::async_runtime::spawn_blocking(move || crate::autofill::enabled(&handle))
+        tauri::async_runtime::spawn_blocking(move || crate::autofill::status(&handle))
             .await
             .ok()
+            .and_then(|s| serde_json::to_value(s).ok())
     }
     #[cfg(not(target_os = "android"))]
     {
@@ -572,18 +610,21 @@ pub(crate) async fn autofill_status(app: AppHandle) -> Option<bool> {
     }
 }
 
-/// Opens the phone's setting for choosing the autofill service.
+/// Opens the phone's setting for choosing the autofill service, or with
+/// `chrome`, Chrome's setting for letting it be used there.
 #[tauri::command]
-pub(crate) async fn autofill_settings(app: AppHandle) {
+pub(crate) async fn autofill_settings(app: AppHandle, chrome: Option<bool>) {
     #[cfg(target_os = "android")]
     {
         let handle = app.clone();
-        let _ =
-            tauri::async_runtime::spawn_blocking(move || crate::autofill::open_settings(&handle))
-                .await;
+        let chrome = chrome.unwrap_or(false);
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            crate::autofill::open_settings(&handle, chrome);
+        })
+        .await;
     }
     #[cfg(not(target_os = "android"))]
-    let _ = app;
+    let _ = (app, chrome);
 }
 
 /// Generates a random password.
@@ -595,7 +636,7 @@ pub(crate) fn generate_password(options: Options) -> Result<Generated, AppError>
 /// This account's sharing ID, for others to share vaults with it.
 #[tauri::command]
 pub(crate) fn my_sharing_id(state: State<'_, AppState>) -> Result<String, AppError> {
-    state.with_session(|s| Ok(crate::sharing_id::encode(s.unlocked.session.account_id())))
+    state.read_session(|s| Ok(crate::sharing_id::encode(s.unlocked.session.account_id())))
 }
 
 /// The members of a vault.
@@ -605,7 +646,7 @@ pub(crate) fn vault_members(
     vault: String,
 ) -> Result<Vec<MemberView>, AppError> {
     let id = vault_id(&vault)?;
-    state.with_session(|s| s.vaults.members(&id, &s.unlocked))
+    state.read_session(|s| s.vaults.members(&id, &s.unlocked))
 }
 
 /// Looks someone up by sharing ID and returns the safety number.
@@ -681,6 +722,208 @@ pub(crate) struct ImportChosen {
     /// phone come through the system's document picker, which only lets
     /// the app read them.
     can_delete: bool,
+    /// A BlackBoxus export: give its password to [`import_open_export`].
+    needs_password: bool,
+}
+
+/// Opens the chosen BlackBoxus export with its password, so its items
+/// can be imported like any other file's.
+#[tauri::command]
+pub(crate) async fn import_open_export(
+    app: AppHandle,
+    password: Zeroizing<String>,
+) -> Result<crate::import::Preview, AppError> {
+    blocking(app, move |state| {
+        let sealed = state.with_session(|s| {
+            let pending = s.pending_import.as_ref().ok_or(AppError::NotFound)?;
+            pending.sealed.clone().ok_or(AppError::NotFound)
+        })?;
+        let password = vault_core::MasterPassword::new(&password).map_err(AppError::from)?;
+        let vaults = vault_core::export::open_export(&password, &sealed).map_err(|e| match e {
+            vault_core::Error::Decryption => AppError::WrongExportPassword,
+            vault_core::Error::NewerItemFormat => AppError::NeedsUpdate,
+            _ => AppError::ImportUnreadable,
+        })?;
+        let (items, preview) = crate::export::preview(&vaults);
+        state.with_session(|s| {
+            let pending = s.pending_import.as_mut().ok_or(AppError::NotFound)?;
+            pending.items = items;
+            pending.preview = preview.clone();
+            pending.sealed = None;
+            Ok(())
+        })?;
+        Ok(preview)
+    })
+    .await
+}
+
+/// What to export, with the master password typed again.
+#[derive(serde::Deserialize)]
+pub(crate) struct ExportRequest {
+    /// `encrypted` or `csv`.
+    format: String,
+    /// The master password, to confirm it's the account's owner.
+    master: Zeroizing<String>,
+    /// The export password, twice, for an encrypted export.
+    password: Option<Zeroizing<String>>,
+    confirm: Option<Zeroizing<String>>,
+    /// Today's date where the person is, `YYYY-MM-DD`, for the file name.
+    day: String,
+}
+
+/// An export that was saved.
+#[derive(Serialize)]
+pub(crate) struct ExportDone {
+    vaults: usize,
+    items: usize,
+    /// Items left out because they need a newer version of the app.
+    left_out: usize,
+}
+
+/// Exports every vault this account can read to a file the person picks:
+/// encrypted with an export password (spec section 6.9), or as plain CSV.
+/// Returns `None` if they cancelled choosing where to save it.
+#[tauri::command]
+pub(crate) async fn export_vaults(
+    app: AppHandle,
+    request: ExportRequest,
+) -> Result<Option<ExportDone>, AppError> {
+    let encrypted = match request.format.as_str() {
+        "encrypted" => true,
+        "csv" => false,
+        _ => return Err(AppError::InvalidSetting),
+    };
+    let day = request.day.clone();
+    let (bytes, done) = blocking(app.clone(), move |state| {
+        if request.master.is_empty() {
+            return Err(AppError::EmptyPassword);
+        }
+        // The master password, checked on this device, so it works offline.
+        let record = state.account().ok_or(AppError::NoAccount)?;
+        let secret_key = state.storage.secret_key(&record)?;
+        let saved = state.storage.load_offline()?.ok_or(AppError::Storage)?;
+        let opened = saved
+            .unlock(&request.master, &secret_key)
+            .map_err(|e| match e {
+                client_core::ClientError::WrongCredentials => AppError::WrongPassword,
+                other => other.into(),
+            })?;
+        if wire::b64(opened.account_id.as_bytes()) != record.account_id {
+            return Err(AppError::Tampered);
+        }
+        let export_password = if encrypted {
+            let (Some(password), Some(confirm)) = (&request.password, &request.confirm) else {
+                return Err(AppError::EmptyPassword);
+            };
+            check_new_password(&record.email, password, confirm)?;
+            Some(
+                vault_core::MasterPassword::new_for_account_creation(password)
+                    .map_err(AppError::from)?,
+            )
+        } else {
+            None
+        };
+        let (vaults, left_out) = state.read_session(|s| {
+            let mut vaults = Vec::new();
+            let mut left_out = 0_usize;
+            for summary in s.vaults.summaries(&s.unlocked) {
+                let id = vault_id(&summary.id)?;
+                left_out = left_out.saturating_add(summary.newer);
+                vaults.push(vault_core::export::ExportedVault {
+                    name: summary.name,
+                    items: s
+                        .vaults
+                        .items(&id)?
+                        .into_iter()
+                        .map(|(_, item)| item)
+                        .collect(),
+                });
+            }
+            Ok((vaults, left_out))
+        })?;
+        let done = ExportDone {
+            vaults: vaults.len(),
+            items: vaults.iter().map(|v| v.items.len()).sum(),
+            left_out,
+        };
+        let bytes = match &export_password {
+            Some(password) => Zeroizing::new(
+                vault_core::export::seal_export(password, &vaults, &vault_core::KdfParams::DEFAULT)
+                    .map_err(AppError::from)?,
+            ),
+            None => crate::export::csv(&vaults)?,
+        };
+        Ok((bytes, done))
+    })
+    .await?;
+
+    let day: String = day
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == '-')
+        .take(10)
+        .collect();
+    let name = if encrypted {
+        format!("BlackBoxus export {day}.bbx")
+    } else {
+        format!("BlackBoxus export {day} UNENCRYPTED.csv")
+    };
+    let picker = app.clone();
+    let chosen = tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+        let state = picker.state::<AppState>();
+        let _screen = state.away.system_screen();
+        let dialog = picker
+            .dialog()
+            .file()
+            .set_title("Save the export")
+            .set_file_name(&name);
+        #[cfg(desktop)]
+        let dialog = if encrypted {
+            dialog.add_filter("BlackBoxus export", &["bbx"])
+        } else {
+            dialog.add_filter("CSV", &["csv"])
+        };
+        dialog.blocking_save_file()
+    })
+    .await
+    .map_err(|_| AppError::Internal)?;
+    let Some(chosen) = chosen else {
+        return Ok(None);
+    };
+    write_chosen(&app, chosen, &bytes)?;
+    Ok(Some(done))
+}
+
+#[cfg(desktop)]
+fn write_chosen(
+    _app: &AppHandle,
+    chosen: tauri_plugin_dialog::FilePath,
+    bytes: &[u8],
+) -> Result<(), AppError> {
+    let path = chosen.into_path().map_err(|_| AppError::Storage)?;
+    std::fs::write(path, bytes).map_err(|_| AppError::Storage)
+}
+
+#[cfg(mobile)]
+fn write_chosen(
+    app: &AppHandle,
+    chosen: tauri_plugin_dialog::FilePath,
+    bytes: &[u8],
+) -> Result<(), AppError> {
+    use std::io::Write as _;
+    use tauri_plugin_fs::{FsExt, OpenOptions};
+    let mut file = app
+        .fs()
+        .open(
+            chosen,
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .clone(),
+        )
+        .map_err(|_| AppError::Storage)?;
+    file.write_all(bytes).map_err(|_| AppError::Storage)
 }
 
 /// A chosen export, read in full.
@@ -753,6 +996,9 @@ pub(crate) async fn import_choose_file(app: AppHandle) -> Result<Option<ImportCh
     use tauri_plugin_dialog::DialogExt;
     let picker = app.clone();
     let chosen = tauri::async_runtime::spawn_blocking(move || {
+        // The system's file picker pauses the app.
+        let state = picker.state::<AppState>();
+        let _screen = state.away.system_screen();
         let dialog = picker.dialog().file().set_title("Choose a password export");
         // Android matches by file type, and exports are labelled
         // inconsistently there, so phones show every file.
@@ -770,14 +1016,34 @@ pub(crate) async fn import_choose_file(app: AppHandle) -> Result<Option<ImportCh
         let Some(file) = read_export(&reader, chosen)? else {
             return Ok(None);
         };
+        let can_delete = file.path.is_some();
+        // A BlackBoxus export: its password is asked for next.
+        if vault_core::export::is_export(&file.bytes) {
+            let (_, preview) = crate::export::preview(&[]);
+            state.with_session(|s| {
+                s.pending_import = Some(crate::importer::PendingImport {
+                    path: file.path,
+                    items: Vec::new(),
+                    preview: preview.clone(),
+                    sealed: Some(file.bytes),
+                });
+                Ok(())
+            })?;
+            return Ok(Some(ImportChosen {
+                file_name: file.name,
+                preview,
+                can_delete,
+                needs_password: true,
+            }));
+        }
         let parsed = crate::import::parse(&file.bytes, now_ms())?;
         let preview = parsed.preview.clone();
-        let can_delete = file.path.is_some();
         state.with_session(|s| {
             s.pending_import = Some(crate::importer::PendingImport {
                 path: file.path,
                 items: parsed.items,
                 preview: parsed.preview,
+                sealed: None,
             });
             Ok(())
         })?;
@@ -785,6 +1051,7 @@ pub(crate) async fn import_choose_file(app: AppHandle) -> Result<Option<ImportCh
             file_name: file.name,
             preview,
             can_delete,
+            needs_password: false,
         }))
     })
     .await
@@ -835,7 +1102,7 @@ pub(crate) fn import_duplicates(
     vault: String,
 ) -> Result<usize, AppError> {
     let id = vault_id(&vault)?;
-    state.with_session(|s| {
+    state.read_session(|s| {
         let existing: Vec<vault_core::Item> = s
             .vaults
             .items(&id)?
@@ -880,7 +1147,11 @@ pub(crate) async fn hello_enable(app: AppHandle) -> Result<AppStatus, AppError> 
     blocking(app, move |state| {
         // An offline unlock has no session to keep for Hello unlocks.
         state.require_online()?;
-        state.with_session(|s| state.device.enable(&s.unlocked, crate::state::now_ms()))?;
+        // The prompt can take a while: the rest of the app keeps working,
+        // and the prompt pausing the app doesn't count as leaving it.
+        let unlocked = state.read_session(|s| Ok(s.unlocked.clone()))?;
+        let _screen = state.away.system_screen();
+        state.device.enable(&unlocked, crate::state::now_ms())?;
         Ok(state.status())
     })
     .await
@@ -898,7 +1169,10 @@ pub(crate) fn hello_disable(state: State<'_, AppState>) -> Result<AppStatus, App
 pub(crate) async fn unlock_with_hello(app: AppHandle) -> Result<AppStatus, AppError> {
     blocking(app, move |state| {
         let account = account_of(state)?;
-        let unlocked = state.device.unlock(&account, crate::state::now_ms())?;
+        let unlocked = {
+            let _screen = state.away.system_screen();
+            state.device.unlock(&account, crate::state::now_ms())?
+        };
         state.set_unlocked(unlocked)?;
         Ok(state.status())
     })
@@ -916,7 +1190,7 @@ pub(crate) fn open_website(
     use tauri_plugin_opener::OpenerExt;
     let (id, item_id) = (vault_id(&vault)?, item_id(&item)?);
     let url = state
-        .with_session(|s| Ok(items::website(&s.vaults.item(&id, &item_id)?)))?
+        .read_session(|s| Ok(items::website(&s.vaults.item(&id, &item_id)?)))?
         .ok_or(AppError::NotFound)?;
     app.opener()
         .open_url(url, None::<&str>)
@@ -947,7 +1221,7 @@ pub(crate) fn totp_code(
     owner: Option<String>,
 ) -> Result<crate::totp::Code, AppError> {
     let (id, item_id) = (vault_id(&vault)?, item_id(&item)?);
-    let totp = state.with_session(|s| {
+    let totp = state.read_session(|s| {
         let item = vaults_of(s, owner.as_deref())?.item(&id, &item_id)?;
         crate::totp::Totp::parse(&items::field_at(&item, index)?.value)
     })?;
@@ -1202,7 +1476,7 @@ pub(crate) async fn change_password(
             .device
             .password_used(&unlocked, crate::state::now_ms())?;
         state.with_session(|s| {
-            s.unlocked = unlocked;
+            s.unlocked = std::sync::Arc::new(unlocked);
             Ok(())
         })
     })

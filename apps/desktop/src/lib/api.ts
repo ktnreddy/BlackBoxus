@@ -102,6 +102,8 @@ export interface VaultSummary {
   owner: boolean;
   /** Someone else is a member too. */
   shared: boolean;
+  /** Items saved by a newer version of the app, not shown here. */
+  newer: number;
 }
 
 export type ItemType = "login" | "note" | "card" | "identity" | "api";
@@ -149,7 +151,7 @@ export interface ItemInput {
   fields: FieldInput[];
 }
 
-export function syncVaults(): Promise<{
+export interface Synced {
   vaults: VaultSummary[];
   offline: boolean;
   unknown_keys: boolean;
@@ -158,8 +160,16 @@ export function syncVaults(): Promise<{
   waiting: number;
   /** Items changed both here and elsewhere, for the user to settle. */
   conflicts: number;
-}> {
+}
+
+/** Syncs with the server. The app stays usable meanwhile. */
+export function syncVaults(): Promise<Synced> {
   return invoke("sync_vaults");
+}
+
+/** The vaults as this device has them, without waiting for the server. */
+export function localVaults(): Promise<Synced> {
+  return invoke("local_vaults");
 }
 
 /** One version of an item in a conflict. */
@@ -312,8 +322,38 @@ export function importChooseFile(): Promise<{
   file_name: string;
   preview: ImportPreview;
   can_delete: boolean;
+  /** A BlackBoxus export: open it with importOpenExport first. */
+  needs_password: boolean;
 } | null> {
   return invoke("import_choose_file");
+}
+
+/** Opens a chosen BlackBoxus export with its export password. */
+export function importOpenExport(password: string): Promise<ImportPreview> {
+  return invoke<ImportPreview>("import_open_export", { password });
+}
+
+export interface ExportDone {
+  vaults: number;
+  items: number;
+  /** Items left out because they need a newer version of the app. */
+  left_out: number;
+}
+
+/** Today's date where the person is, YYYY-MM-DD. */
+function today(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Exports every vault to a file the person picks; null if they cancelled. */
+export function exportVaults(request: {
+  format: "encrypted" | "csv";
+  master: string;
+  password?: string;
+  confirm?: string;
+}): Promise<ExportDone | null> {
+  return invoke<ExportDone | null>("export_vaults", { request: { ...request, day: today() } });
 }
 
 /** Scans a QR code with the phone's camera and returns its text. */
@@ -325,14 +365,36 @@ export function cancelScan(): Promise<void> {
   return invoke<void>("cancel_scan");
 }
 
-/** Whether BlackBoxus is the phone's autofill service; null on desktops. */
-export function autofillStatus(): Promise<boolean | null> {
-  return invoke<boolean | null>("autofill_status");
+/** The last time Android asked BlackBoxus about a form in another app. */
+export interface AutofillLast {
+  /** When Android last connected to the service, Unix ms; 0 if never. */
+  connected_at: number;
+  /** When it last asked about a form, Unix ms; 0 if never. */
+  at: number;
+  /** The app that showed the form. */
+  app: string;
+  outcome: "offered" | "no_fields" | "own_app" | "no_form" | "error" | "";
+  username: boolean;
+  password: boolean;
+}
+
+export interface AutofillStatus {
+  /** Whether BlackBoxus is the phone's autofill service. */
+  enabled: boolean;
+  last: AutofillLast | null;
+  /** Whether Chrome lets autofill services fill its pages; absent if
+   *  Chrome isn't installed or can't say. */
+  chrome?: boolean | null;
+}
+
+/** The phone's autofill service; null on desktops. */
+export function autofillStatus(): Promise<AutofillStatus | null> {
+  return invoke<AutofillStatus | null>("autofill_status");
 }
 
 /** Opens the phone's setting for choosing the autofill service. */
-export function autofillSettings(): Promise<void> {
-  return invoke<void>("autofill_settings");
+export function autofillSettings(chrome = false): Promise<void> {
+  return invoke<void>("autofill_settings", { chrome });
 }
 
 /** How many of the chosen file's items are already in `vault` and will be left out. */
@@ -494,6 +556,16 @@ export type ServerHint = { kind: "vault"; id: string } | { kind: "shares" } | { 
 /** Calls `f` for each hint the server sends while unlocked and online. */
 export function onServerHint(f: (hint: ServerHint) => void): Promise<() => void> {
   return listen<ServerHint>("server-hint", (e) => f(e.payload));
+}
+
+/** Phones: the vaults were locked because the app left the screen. */
+export function onLockedAway(f: () => void): Promise<() => void> {
+  return listen("locked-away", () => f());
+}
+
+/** Phones: the app is back on the screen and still unlocked. */
+export function onAppBack(f: () => void): Promise<() => void> {
+  return listen("app-back", () => f());
 }
 
 /** A trusted-contact grant, from either side (spec section 11.4). */

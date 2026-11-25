@@ -31,6 +31,8 @@ pub struct PendingImport {
     pub items: Vec<Item>,
     /// What was shown.
     pub preview: Preview,
+    /// A BlackBoxus export, until its password is given.
+    pub sealed: Option<zeroize::Zeroizing<Vec<u8>>>,
 }
 
 impl core::fmt::Debug for PendingImport {

@@ -1,11 +1,13 @@
 <script lang="ts">
   import Icon from "../../components/Icon.svelte";
+  import PasswordField from "../../components/PasswordField.svelte";
   import {
     errorMessage,
     importChooseFile,
     importFinish,
     importProgress,
     importDuplicates,
+    importOpenExport,
     importStart,
     type ImportPreview,
     type ImportProgress,
@@ -25,7 +27,10 @@
   } = $props();
 
   const writable = $derived(vaults.filter((v) => v.writable));
-  let step = $state<"choose" | "preview" | "running" | "done">("choose");
+  let step = $state<"choose" | "password" | "preview" | "running" | "done">("choose");
+  /** A BlackBoxus export (encrypted), and its password while opening it. */
+  let ownExport = $state(false);
+  let exportPassword = $state("");
   let fileName = $state("");
   let preview = $state<ImportPreview | null>(null);
   let target = $state<string>("");
@@ -40,6 +45,22 @@
     if (!target) target = writable.find((v) => v.id === current)?.id ?? writable[0]?.id ?? "";
   });
 
+  async function openExport(event: SubmitEvent) {
+    event.preventDefault();
+    if (!exportPassword || busy) return;
+    busy = true;
+    error = "";
+    try {
+      preview = await importOpenExport(exportPassword);
+      exportPassword = "";
+      step = "preview";
+    } catch (e) {
+      error = errorMessage(e);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function choose() {
     busy = true;
     error = "";
@@ -49,7 +70,8 @@
         fileName = chosen.file_name;
         preview = chosen.preview;
         canDelete = chosen.can_delete;
-        step = "preview";
+        ownExport = chosen.needs_password;
+        step = chosen.needs_password ? "password" : "preview";
       }
     } catch (e) {
       error = errorMessage(e);
@@ -147,8 +169,8 @@
 
     {#if step === "choose"}
       <p class="lede">
-        Export your passwords as a CSV file from your current password manager, then choose the file
-        here. It's read on this device and encrypted before anything is uploaded.
+        Export your passwords as a CSV file from your current password manager, or choose a
+        BlackBoxus export (.bbx). It's read on this device and encrypted before anything is uploaded.
       </p>
       <p class="small">
         Works with exports from Bitwarden, 1Password, Chrome, Edge, Brave, Firefox, Safari, LastPass,
@@ -160,6 +182,20 @@
           <Icon name="upload" size={16} />{busy ? "Reading…" : "Choose file"}
         </button>
       </div>
+    {:else if step === "password"}
+      <form class="pwform" onsubmit={openExport}>
+        <p class="lede">
+          <span class="selectable">{fileName}</span> is a BlackBoxus export. Type the export password
+          chosen when it was made.
+        </p>
+        <PasswordField id="import-export-password" label="Export password" bind:value={exportPassword} disabled={busy} />
+        <div class="row actions">
+          <button type="button" class="btn ghost" onclick={cancel}>Cancel</button>
+          <button type="submit" class="btn primary" disabled={busy || !exportPassword}>
+            {busy ? "Opening…" : "Open"}
+          </button>
+        </div>
+      </form>
     {:else if step === "preview" && preview}
       <div class="summary">
         <div class="stat"><span class="num">{total}</span><span class="small">items</span></div>
@@ -246,8 +282,8 @@
           {progress?.done === 1 ? "item" : "items"}.
         </p>
       {/if}
-      {#if fileDeleted}
-        <p class="small">The export file was deleted.</p>
+      {#if fileDeleted || ownExport}
+        {#if fileDeleted}<p class="small">The export file was deleted.</p>{/if}
         <div class="row actions">
           <button type="button" class="btn primary" onclick={onclose}>Done</button>
         </div>
@@ -286,6 +322,11 @@
 </div>
 
 <style>
+  .pwform {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
   .backdrop {
     position: fixed;
     inset: 0;

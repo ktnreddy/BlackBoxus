@@ -189,6 +189,9 @@ pub struct VaultSummary {
     pub owner: bool,
     /// Whether anyone else is a member.
     pub shared: bool,
+    /// Items saved by a newer version of the app, which this one can't
+    /// show until it is updated.
+    pub newer: usize,
 }
 
 /// Longest vault name, in characters.
@@ -353,6 +356,36 @@ impl Vaults {
             pending_contact: None,
             queue: None,
         }
+    }
+
+    /// A copy to sync with the server while the app keeps using this one:
+    /// the same files and key log, and the keys already looked up. It holds
+    /// no vaults yet; each is read from this device's copy as it syncs.
+    #[must_use]
+    pub fn for_sync(&self) -> Self {
+        Self {
+            directory: self.directory.clone(),
+            replicas: BTreeMap::new(),
+            order: self.order.clone(),
+            files: self.files.clone(),
+            pending: None,
+            pending_contact: None,
+            queue: None,
+        }
+    }
+
+    /// Replaces this set with `synced`, made by [`Self::for_sync`], keeping
+    /// what only lives in memory here: people looked up to share with.
+    pub fn replace_with(&mut self, mut synced: Self) {
+        synced.pending = self.pending.take();
+        synced.pending_contact = self.pending_contact.take();
+        *self = synced;
+    }
+
+    /// Whether no vault has been read yet, from the server or this device.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.replicas.is_empty()
     }
 
     // -- Changes made offline --------------------------------------------
@@ -1426,6 +1459,7 @@ impl Vaults {
                     writable: matches!(role, Some(Role::Owner | Role::Editor)),
                     owner: role == Some(Role::Owner),
                     shared: replica.state().is_some_and(|s| s.members.len() > 1),
+                    newer: replica.newer_items().unwrap_or_default(),
                 }
             })
             .collect::<Vec<_>>();

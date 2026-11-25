@@ -162,6 +162,15 @@
       </span>
     </div>
   {/if}
+  {#if vault && vault.newer > 0}
+    <div class="banner" role="status">
+      <Icon name="alert" size={22} weight={1.8} />
+      <span class="btext">
+        <span class="bt">{vault.newer === 1 ? "1 item needs" : `${vault.newer} items need`} a newer BlackBoxus</span>
+        <span class="bd">{vault.newer === 1 ? "It was" : "They were"} saved by a newer version on another device, and {vault.newer === 1 ? "is" : "are"} kept safe as {vault.newer === 1 ? "it is" : "they are"}. Update this app to see {vault.newer === 1 ? "it" : "them"}.</span>
+      </span>
+    </div>
+  {/if}
   {#if unknownKeys}
     <div class="banner" role="alert">
       <Icon name="shieldAlert" size={22} weight={1.8} />
@@ -316,6 +325,7 @@
     outline: none;
     color: #f4f4f5;
     font: 400 16px "DM Sans Variable", sans-serif;
+    text-overflow: ellipsis;
   }
   .chips {
     display: flex;
@@ -345,7 +355,9 @@
   .list {
     flex: 1;
     overflow-y: auto;
-    padding: 4px 12px 0;
+    /* Room below the last item, so the add button never covers its copy
+       button. */
+    padding: 4px 12px 88px;
     display: flex;
     flex-direction: column;
   }

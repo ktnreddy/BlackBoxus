@@ -64,7 +64,20 @@ with BlackBoxus**. In Chrome, also turn on **Settings › Autofill services
 - Any app can claim a web domain for its fields, so web domains from other
   apps are ignored. There, nothing is matched automatically: the picker
   names the app and you search for the login yourself.
-- Saving new logins from other apps isn't offered; add them in the app.
+- On Android 11 and later, keyboards that support it (Gboard, Samsung
+  Keyboard) show the offer in their suggestion strip instead of a dropdown
+  (`androidx.autofill`'s inline suggestion template).
+- **Saving.** When a form with a password field is sent, Android asks
+  "Save to BlackBoxus?". Choosing Save keeps what was typed in memory only
+  (`PendingSave`, for five minutes) and opens `AutofillSaveActivity`,
+  which asks the person to confirm the name. Rust then updates the login
+  for the same site (or, in apps, the same title) and username, or makes a
+  new one in the first vault the account owns. If BlackBoxus is locked,
+  the person unlocks it and comes back, and the save goes through then.
+- Settings › Autofill shows what happened the last time Android asked
+  (which app, and whether the offer was shown), and whether Chrome is set
+  to use another autofill service, read from Chrome's documented content
+  provider. Only the package name, time and outcome are kept.
 
 The Rust side switches by platform: `browser_mobile.rs` stands in for the
 browser bridge, `clipboard_mobile.rs` for the clipboard, and `storage.rs`
@@ -172,6 +185,5 @@ services the scanner doesn't work; pasting the setup key still does.
 
 ## Still to do
 
-- **Autofill suggestions in the keyboard** (Android 11's inline
-  suggestions), and saving logins typed into other apps.
-- **Passkeys**, through Android's Credential Manager.
+- **Passkeys**, through Android's Credential Manager (see
+  `docs/design/passkeys.md`).

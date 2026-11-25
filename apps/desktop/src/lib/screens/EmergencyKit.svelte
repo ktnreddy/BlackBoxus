@@ -98,7 +98,11 @@
       <dl>
         <div><dt>Email</dt><dd class="selectable">{kit.email}</dd></div>
         <div><dt>Server</dt><dd class="selectable">{kit.server}</dd></div>
-        <div><dt>Secret Key</dt><dd class="mono key selectable">{kit.secret_key}</dd></div>
+        <div>
+          <dt>Secret Key</dt>
+          <dd class="mono key selectable">{kit.secret_key}</dd>
+          <dd class="kit-muted">One key. The dashes only split it into groups to make copying easier.</dd>
+        </div>
         {#if kit.recovery_key}
           <div>
             <dt>Recovery key</dt>

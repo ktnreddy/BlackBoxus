@@ -8,6 +8,7 @@
     getItem,
     isAppError,
     listItems,
+    localVaults,
     onServerHint,
     lock,
     pendingChanges,
@@ -23,6 +24,7 @@
   import ItemDetail from "./vault/ItemDetail.svelte";
   import GeneratorDialog from "./vault/GeneratorDialog.svelte";
   import ImportDialog from "./vault/ImportDialog.svelte";
+  import ExportDialog from "./vault/ExportDialog.svelte";
   import ItemEditor from "./vault/ItemEditor.svelte";
   import SettingsDialog from "./vault/SettingsDialog.svelte";
   import ShareVault from "./vault/ShareVault.svelte";
@@ -95,6 +97,7 @@
   let generatorOpen = $state(false);
   let healthOpen = $state(false);
   let importOpen = $state(false);
+  let exportOpen = $state(false);
   let settingsOpen = $state(false);
   /** Naming a vault: a new one, or renaming the one shown. */
   let naming = $state<"new" | "rename" | null>(null);
@@ -188,6 +191,19 @@
     onchange(await lock());
   }
 
+  // Show this device's copy straight away; the sync then brings it up to
+  // date in the background.
+  localVaults().then(
+    async (local) => {
+      if (vaults.length > 0 || local.vaults.length === 0) return;
+      vaults = local.vaults;
+      waiting = local.waiting;
+      conflicts = local.conflicts;
+      if (!vaults.some((v) => v.id === vaultId)) vaultId = vaults[0]?.id ?? null;
+      await refreshItems();
+    },
+    () => {},
+  );
   sync();
 
   // Sync soon after the server says something changed, waiting for a
@@ -372,6 +388,11 @@
   <StatusBar icon="alert" tone="danger" ondismiss={() => (dismissed.syncError = true)}>
     {syncError}
   </StatusBar>
+{:else if vault && vault.newer > 0}
+  <StatusBar icon="alert">
+    {vault.newer === 1 ? "1 item in this vault was" : `${vault.newer} items in this vault were`} saved by a
+    newer version of BlackBoxus. They're kept safe as they are; update this app to see them.
+  </StatusBar>
 {/if}
 
 <div class="layout" class:narrow data-pane={pane}>
@@ -511,6 +532,16 @@
       }}
     >
       <span class="side-name"><Icon name="upload" size={16} />Import passwords</span>
+    </button>
+    <button
+      type="button"
+      class="side-item plain"
+      onclick={() => {
+        chose();
+        exportOpen = true;
+      }}
+    >
+      <span class="side-name"><Icon name="download" size={16} />Export vaults</span>
     </button>
     <button
       type="button"
@@ -696,6 +727,14 @@
     }}
     onchange={(s) => onchange(s)}
     onclose={() => (settingsOpen = false)}
+    onnotice={showNotice}
+  />
+{/if}
+
+{#if exportOpen}
+  <ExportDialog
+    email={status.account?.email ?? ""}
+    onclose={() => (exportOpen = false)}
     onnotice={showNotice}
   />
 {/if}

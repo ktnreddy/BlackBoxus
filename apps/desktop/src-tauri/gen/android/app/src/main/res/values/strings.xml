@@ -18,4 +18,21 @@
     <string name="autofill_none">No logins with a password yet.</string>
     <string name="autofill_no_results">No logins match.</string>
     <string name="autofill_nothing">This login has nothing to fill into these fields.</string>
+
+    <!-- Saving a login typed into another app -->
+    <string name="save_title">Save to BlackBoxus?</string>
+    <string name="save_for_site">You signed in to %1$s.</string>
+    <string name="save_for_app">You signed in to the app %1$s.</string>
+    <string name="save_name">Name</string>
+    <string name="save_username">Username</string>
+    <string name="save_password">Password · %1$d characters, hidden</string>
+    <string name="save_explain">It\'s encrypted on this phone before it\'s stored or synced. If you already have this login, its password is updated instead.</string>
+    <string name="save_button">Save</string>
+    <string name="save_not_now">Not now</string>
+    <string name="save_saving">Saving…</string>
+    <string name="save_saved">Saved to %1$s.</string>
+    <string name="save_updated">Password updated in %1$s.</string>
+    <string name="save_locked">BlackBoxus is locked. Open it and unlock, then come back here (Back or Recents) and it saves by itself.</string>
+    <string name="save_failed">Couldn\'t save: %1$s</string>
+    <string name="save_expired">This sign-in is too old to save now. Sign in again to be asked again.</string>
 </resources>

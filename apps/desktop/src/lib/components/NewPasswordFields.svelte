@@ -45,6 +45,23 @@
   $effect(() => {
     ok = rating !== null && rating.acceptable && matches;
   });
+
+  /** What still stands between the user and the button below, in plain
+   *  words, so a greyed-out button never goes unexplained. */
+  const why = $derived.by(() => {
+    if (password.length === 0) return "";
+    if (!rating) return "Checking how strong it is…";
+    if (rating.chars < rating.min_chars) {
+      const more = rating.min_chars - rating.chars;
+      return `Add ${more} more character${more === 1 ? "" : "s"}. A master password needs at least ${rating.min_chars}, because it is the one thing protecting everything else.`;
+    }
+    if (!rating.acceptable) {
+      return `Still too easy to guess${rating.hint ? `: ${rating.hint.replace(/\.$/, "")}` : ""}. Add another word or two.`;
+    }
+    if (confirm.length === 0) return "Strong enough. Now type it again below, to make sure there's no typo.";
+    if (!matches) return "The two passwords don't match yet. Check the second one for a typo.";
+    return "";
+  });
 </script>
 
 <div>
@@ -73,13 +90,7 @@
       <span class="meter-label" class:weak={rating.score < 3}>{rating.label}</span>
     </div>
     <div class="small hint">
-      {#if rating.chars < rating.min_chars}
-        At least {rating.min_chars} characters · {rating.chars} used
-      {:else if rating.hint && !rating.acceptable}
-        {rating.hint}
-      {:else}
-        {rating.chars} characters
-      {/if}
+      {rating.chars} of at least {rating.min_chars} characters
     </div>
   {/if}
 </div>
@@ -92,13 +103,18 @@
     autocomplete="new-password"
     {disabled}
   />
-  {#if confirm.length > 0 && !matches}
-    <div class="small hint">The two passwords don't match yet.</div>
-  {/if}
 </div>
+{#if why}<div class="small why" role="status" aria-live="polite">{why}</div>{/if}
 
 
 <style>
+  .why {
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--panel, rgba(255, 255, 255, 0.04));
+    color: var(--warn, #fcd34d);
+    line-height: 1.45;
+  }
   .meter-row {
     display: flex;
     align-items: center;

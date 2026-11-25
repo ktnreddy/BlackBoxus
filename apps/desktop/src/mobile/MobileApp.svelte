@@ -26,6 +26,7 @@
   // svelte-ignore state_referenced_locally
   let status = $state<AppStatus>(initial);
   $effect(() => {
+    document.documentElement.classList.add("m-app");
     if (status.platform === "ios") startIOS();
   });
   /** The Emergency Kit, held only until the user confirms they wrote it down. */

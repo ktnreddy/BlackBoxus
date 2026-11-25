@@ -2,11 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
     <title>BlackBoxus</title>
   </head>
   <body>
+    <!-- Shown until the app has started, so opening it never shows a blank
+         screen. Styled in app.css; removed by App.svelte. -->
+    <div id="splash" aria-hidden="true"><img src="/logo.png" alt="" width="72" height="72" /></div>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

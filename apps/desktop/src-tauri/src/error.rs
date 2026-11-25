@@ -233,6 +233,14 @@ pub enum AppError {
     /// Another action is still running.
     #[error("Please wait for the last step to finish.")]
     Busy,
+    /// The export password is wrong, or the file was changed.
+    #[error("That export password doesn't open this file.")]
+    WrongExportPassword,
+    /// The vault has items saved by a newer version of BlackBoxus.
+    #[error(
+        "This vault has items saved by a newer version of BlackBoxus. Update the app to make this change."
+    )]
+    NeedsUpdate,
     /// Anything unexpected.
     #[error("Something went wrong. Please try again.")]
     Internal,
@@ -297,6 +305,8 @@ impl AppError {
             Self::TooEarly => "too_early",
             Self::EmergencyUnavailable => "emergency_unavailable",
             Self::Busy => "busy",
+            Self::NeedsUpdate => "needs_update",
+            Self::WrongExportPassword => "wrong_export_password",
             Self::Internal => "internal",
         }
     }
@@ -330,6 +340,7 @@ impl From<CryptoError> for AppError {
             CryptoError::InvalidIdentity => Self::InvalidEmail,
             CryptoError::InvalidSecretKey(why) => Self::InvalidSecretKey(why.to_string()),
             CryptoError::Authentication => Self::WrongCredentials,
+            CryptoError::NewerItemFormat => Self::NeedsUpdate,
             _ => Self::Internal,
         }
     }
@@ -344,6 +355,7 @@ impl From<ClientError> for AppError {
             ClientError::Server { status: 409, .. } => Self::EmailTaken,
             ClientError::Server { .. } => Self::Server,
             ClientError::InvalidResponse => Self::Tampered,
+            ClientError::NeedsUpdate => Self::NeedsUpdate,
             ClientError::Crypto(e) => e.into(),
             _ => Self::Internal,
         }

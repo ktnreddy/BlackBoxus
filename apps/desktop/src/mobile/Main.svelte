@@ -22,9 +22,13 @@
     getSettings,
     isAppError,
     listItems,
+    localVaults,
     lock,
     pendingChanges,
     onServerHint,
+    onLockedAway,
+    onAppBack,
+    appStatus,
     syncVaults,
     denyEmergency,
     type AppStatus,
@@ -175,6 +179,19 @@
     onchange(await lock());
   }
 
+  // Show this device's copy straight away; the sync then brings it up to
+  // date in the background.
+  localVaults().then(
+    async (local) => {
+      if (vaults.length > 0 || local.vaults.length === 0) return;
+      vaults = local.vaults;
+      waiting = local.waiting;
+      conflicts = local.conflicts;
+      if (!vaults.some((v) => v.id === vaultId)) vaultId = vaults[0]?.id ?? null;
+      await refreshItems();
+    },
+    () => {},
+  );
   sync();
 
   // Sync shortly after the server says something changed.
@@ -194,36 +211,38 @@
     };
   });
 
-  // Lock after the chosen time without a touch, or when the app comes
-  // back after being away that long.
+  // Leaving the app is handled by the Rust side, which erases the keys
+  // as the app leaves the screen ("straight away") or locks when it comes
+  // back after being away the chosen time. It tells this screen either way.
   $effect(() => {
-    let last = Date.now();
-    const touch = () => (last = Date.now());
-    // "Straight away" (0) locks on leaving the app, and after a minute
-    // without a touch while open.
+    const stopLocked = onLockedAway(async () =>
+      onchange(await appStatus(), "Locked because you left the app."),
+    );
+    const stopBack = onAppBack(() => {
+      touch();
+      if (!syncing) sync();
+    });
+    return () => {
+      stopLocked.then((f) => f()).catch(() => {});
+      stopBack.then((f) => f()).catch(() => {});
+    };
+  });
+
+  // While the app is open, lock after the chosen time without a touch.
+  // "Straight away" (0) means a minute without a touch.
+  let last = Date.now();
+  const touch = () => (last = Date.now());
+  $effect(() => {
     const idleMs = Math.max(1, autoLockMinutes) * 60_000;
     const idle = setInterval(() => {
       if (Date.now() - last > idleMs) lockNow();
     }, 15_000);
-    let hiddenAt: number | null = null;
-    const visibility = () => {
-      if (document.hidden) {
-        hiddenAt = Date.now();
-      } else if (hiddenAt !== null) {
-        if (Date.now() - hiddenAt >= autoLockMinutes * 60_000) lockNow();
-        else if (!syncing) sync();
-        hiddenAt = null;
-        touch();
-      }
-    };
     window.addEventListener("pointerdown", touch);
     window.addEventListener("keydown", touch);
-    document.addEventListener("visibilitychange", visibility);
     return () => {
       clearInterval(idle);
       window.removeEventListener("pointerdown", touch);
       window.removeEventListener("keydown", touch);
-      document.removeEventListener("visibilitychange", visibility);
     };
   });
 

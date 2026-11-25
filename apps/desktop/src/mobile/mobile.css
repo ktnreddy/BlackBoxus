@@ -548,6 +548,17 @@ button.m-row:active {
   place-items: center;
 }
 
+/* Phones: the screen is the app, not a page. Nothing scrolls, bounces or
+   zooms as a whole; lists and pages scroll inside it. */
+html.m-app,
+html.m-app body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+html.m-app .m-root {
+  touch-action: pan-x pan-y;
+}
+
 /* iPhone and iPad (see ios.ts). The frame ends above the keyboard, and the
    gap kept for the home indicator goes while the keyboard covers it. The
    page itself never rubber-bands; lists inside it still do. */

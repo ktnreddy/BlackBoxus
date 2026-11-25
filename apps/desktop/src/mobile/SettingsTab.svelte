@@ -6,11 +6,13 @@
   import PasswordInput from "./PasswordInput.svelte";
   import TrustedPage from "./TrustedPage.svelte";
   import ImportPage from "./ImportPage.svelte";
+  import ExportPage from "./ExportPage.svelte";
   import { back, opened } from "./nav";
   import type { IconName } from "./icons";
   import {
     autofillSettings,
     autofillStatus,
+    type AutofillStatus,
     changePassword,
     copyText,
     emergencyStatus,
@@ -87,12 +89,53 @@
 
   // Filling in other apps (Android's autofill service). Checked again when
   // the person comes back from the phone's settings.
-  let autofill = $state<boolean | null>(null);
+  let autofillInfo = $state<AutofillStatus | null>(null);
+  const autofill = $derived(autofillInfo === null ? null : autofillInfo.enabled);
   const checkAutofill = () =>
     autofillStatus().then(
-      (v) => (autofill = v),
+      (v) => (autofillInfo = v),
       () => {},
     );
+
+  /** Browsers' and apps' package names, as people know them. */
+  const APP_NAMES: Record<string, string> = {
+    "com.android.chrome": "Chrome",
+    "com.sec.android.app.sbrowser": "Samsung Internet",
+    "org.mozilla.firefox": "Firefox",
+    "com.brave.browser": "Brave",
+    "com.microsoft.emmx": "Edge",
+    "com.duckduckgo.mobile.android": "DuckDuckGo",
+  };
+  function ago(ms: number): string {
+    const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (s < 60) return "just now";
+    if (s < 3600) return `${Math.round(s / 60)} min ago`;
+    if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+    return new Date(ms).toLocaleDateString();
+  }
+  /** What happened the last time, in plain words, so the person (and we)
+   *  can tell why "Fill with BlackBoxus" did or didn't appear. */
+  const autofillLast = $derived.by(() => {
+    const last = autofillInfo?.last;
+    if (!autofillInfo?.enabled || !last) return "";
+    if (last.at === 0) {
+      return last.connected_at === 0
+        ? "Android hasn't started BlackBoxus's autofill yet. Restart the phone, then tap a password field in any app."
+        : "Android hasn't asked about any form yet. Tap a username or password field in another app.";
+    }
+    const app = APP_NAMES[last.app] ?? last.app;
+    const when = ago(last.at);
+    switch (last.outcome) {
+      case "offered":
+        return `Last: ${app}, ${when}. “Fill with BlackBoxus” was offered.`;
+      case "no_fields":
+        return `Last: ${app}, ${when}. No username or password field was found there, so nothing was offered.`;
+      case "error":
+        return `Last: ${app}, ${when}. Something went wrong reading that form, so nothing was offered.`;
+      default:
+        return `Last: ${app}, ${when}.`;
+    }
+  });
   checkAutofill();
   $effect(() => {
     const again = () => {
@@ -102,7 +145,7 @@
     return () => document.removeEventListener("visibilitychange", again);
   });
 
-  type Sub = "password" | "recovery" | "kit" | "trusted" | "import";
+  type Sub = "password" | "recovery" | "kit" | "trusted" | "import" | "export";
   let sub = $state<Sub | null>(null);
   let lockSheet = $state(false);
   let signOutSheet = $state(false);
@@ -310,7 +353,7 @@
       </label>
     {/if}
     <button type="button" class="st-row end" onclick={openLock}>
-      <span class="st-grow">Lock after</span><span class="st-value">{lockShort(autoLockMinutes)}</span>
+      <span class="st-text"><span class="st-label">Lock after: {lockShort(autoLockMinutes)}</span><span class="st-sub">How long BlackBoxus stays open while you're away. Locking erases the keys from memory.</span></span>
       <Icon name="next" size={18} />
     </button>
   </div>
@@ -341,30 +384,44 @@
         <span class="st-value">{autofill ? "On" : "Off"}</span>
         <Icon name="next" size={18} />
       </button>
+      {#if autofill && autofillInfo?.chrome != null}
+        <button type="button" class="st-row end" onclick={() => autofillSettings(true)}>
+          <span class="st-text">
+            <span class="st-label">Fill in Chrome</span>
+            <span class="st-sub">
+              {autofillInfo.chrome
+                ? "Chrome lets BlackBoxus fill its pages"
+                : "Chrome uses its own password manager. Tap, choose “Autofill using another service”, then restart Chrome"}
+            </span>
+          </span>
+          <span class="st-value">{autofillInfo.chrome ? "On" : "Off"}</span>
+          <Icon name="next" size={18} />
+        </button>
+      {/if}
     </div>
     <p class="st-note">
-      Tap a username or password field in an app or browser, then choose “Fill with BlackBoxus”. BlackBoxus
-      needs to be unlocked. In Chrome, also turn on Settings › Autofill services › Autofill using another
-      service.
+      Tap a username or password field in any app, then choose “Fill with BlackBoxus”. If a browser offers
+      its own password manager instead, turn that off in the browser's settings.
     </p>
+    {#if autofillLast}<p class="st-note">{autofillLast}</p>{/if}
   {/if}
 
   <p class="st-section">Security</p>
   <div class="st-group">
     <button type="button" class="st-row" onclick={() => open("password")} disabled={offline}>
-      <span class="st-grow">Change master password</span>{#if offline}<span class="st-value">Needs a connection</span>{/if}
+      <span class="st-text"><span class="st-label">Change master password</span><span class="st-sub">The password you type to unlock. Your other devices ask for the new one next time.</span></span>{#if offline}<span class="st-value">Needs a connection</span>{/if}
       <Icon name="next" size={18} />
     </button>
     <button type="button" class="st-row" onclick={() => open("recovery")} disabled={offline}>
-      <span class="st-grow">Recovery key</span>{#if recoveryOn !== null}<span class="st-value">{recoveryOn ? "On" : "Off"}</span>{/if}
+      <span class="st-text"><span class="st-label">Recovery key</span><span class="st-sub">A spare key for choosing a new master password if you forget yours.</span></span>{#if recoveryOn !== null}<span class="st-value">{recoveryOn ? "On" : "Off"}</span>{/if}
       <Icon name="next" size={18} />
     </button>
     <button type="button" class="st-row" onclick={() => open("trusted")} disabled={offline}>
-      <span class="st-grow">Trusted contact</span>{#if contactSet !== null}<span class="st-value">{contactSet ? "Set" : "Not set"}</span>{/if}
+      <span class="st-text"><span class="st-label">Trusted contact</span><span class="st-sub">Someone who can ask to read your vaults if you can't. You get a waiting period to say no.</span></span>{#if contactSet !== null}<span class="st-value">{contactSet ? "Set" : "Not set"}</span>{/if}
       <Icon name="next" size={18} />
     </button>
     <button type="button" class="st-row" onclick={() => open("kit")}>
-      <span class="st-grow">Emergency Kit</span><span class="st-value">View</span>
+      <span class="st-text"><span class="st-label">Emergency Kit</span><span class="st-sub">Your email and Secret Key, needed to sign in on a new device. Keep it on paper.</span></span><span class="st-value">View</span>
       <Icon name="next" size={18} />
     </button>
   </div>
@@ -372,12 +429,16 @@
   <p class="st-section">Data</p>
   <div class="st-group">
     <button type="button" class="st-row" onclick={() => open("import")} disabled={offline}>
-      <span class="st-grow">Import passwords</span>
+      <span class="st-text"><span class="st-label">Import passwords</span><span class="st-sub">From Chrome, another password manager (CSV), or a BlackBoxus export.</span></span>
+      <Icon name="next" size={18} />
+    </button>
+    <button type="button" class="st-row" onclick={() => open("export")}>
+      <span class="st-text"><span class="st-label">Export your vaults</span><span class="st-sub">An encrypted backup file, or a CSV to move to another app.</span></span>
       <Icon name="next" size={18} />
     </button>
     {#if sharingId}
       <button type="button" class="st-row" onclick={copySharingId}>
-        <span class="st-grow">Your sharing ID</span><span class="st-value st-mono">{sharingId.slice(0, 8)}…</span>
+        <span class="st-text"><span class="st-label">Your sharing ID</span><span class="st-sub">Give this to someone so they can share a vault with you. Tap to copy.</span></span><span class="st-value st-mono">{sharingId.slice(0, 8)}…</span>
       </button>
     {/if}
     <button
@@ -388,7 +449,7 @@
         opened(() => (signOutSheet = false));
       }}
     >
-      <span class="st-grow">Sign out of this phone</span>
+      <span class="st-text"><span class="st-label">Sign out of this phone</span><span class="st-sub">Your vaults stay safe on the server. Signing in again needs your email, Secret Key and master password.</span></span>
     </button>
   </div>
 
@@ -492,6 +553,8 @@
   <TrustedPage {onnotice} />
 {:else if sub === "import"}
   <ImportPage {vaults} {onnotice} />
+{:else if sub === "export"}
+  <ExportPage email={status.account?.email ?? ""} {onnotice} />
 {/if}
 
 <style>

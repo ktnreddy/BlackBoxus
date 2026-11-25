@@ -1,7 +1,7 @@
 //! What the app holds in memory while it runs.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use client_core::login::Unlocked;
 use serde::Serialize;
@@ -17,8 +17,12 @@ use crate::vaults::{VaultFiles, Vaults, log_key};
 /// An unlocked account: its session, key set and vaults. Dropping it
 /// erases the keys and decrypted vault keys.
 pub struct Session {
-    /// The signed-in session and key set.
-    pub unlocked: Unlocked,
+    /// Which unlock this is, so a sync that finishes after the vaults were
+    /// locked (and perhaps unlocked again) leaves the new session alone.
+    pub id: u64,
+    /// The signed-in session and key set. Shared, not copied, with a sync
+    /// running in the background.
+    pub unlocked: Arc<Unlocked>,
     /// The account's vaults.
     pub vaults: Vaults,
     /// A file chosen for import, until imported or cancelled.
@@ -71,6 +75,12 @@ struct Inner {
 pub struct AppState {
     inner: Mutex<Inner>,
     busy: AtomicBool,
+    /// Held by a sync for as long as it runs, and by anything that changes
+    /// the vaults, so the two never overlap. Reading never waits for it,
+    /// and neither does locking: a sync talks to the server without
+    /// holding `inner`.
+    sync_gate: Mutex<()>,
+    sessions: AtomicU64,
     /// Where the account record and Secret Key are kept.
     pub storage: Storage,
     /// How requests reach the server.
@@ -81,6 +91,8 @@ pub struct AppState {
     pub import: ImportStatus,
     /// Windows Hello unlock.
     pub device: DeviceUnlock,
+    /// When a phone app left the screen.
+    pub away: crate::away::Away,
 }
 
 impl core::fmt::Debug for AppState {
@@ -111,11 +123,14 @@ impl AppState {
                 offline: false,
             }),
             busy: AtomicBool::new(false),
+            sync_gate: Mutex::new(()),
+            sessions: AtomicU64::new(0),
             storage,
             transport,
             clipboard: SecretClipboard::default(),
             import: ImportStatus::default(),
             device,
+            away: crate::away::Away::default(),
         }
     }
 
@@ -166,7 +181,8 @@ impl AppState {
 
     fn session_for(&self, unlocked: Unlocked) -> Result<Session, AppError> {
         Ok(Session {
-            unlocked,
+            id: self.sessions.fetch_add(1, Ordering::Relaxed),
+            unlocked: Arc::new(unlocked),
             vaults: Vaults::new(VaultFiles::new(self.storage.vault_dir()), log_key()?),
             pending_import: None,
             emergency: None,
@@ -224,7 +240,8 @@ impl AppState {
         }
     }
 
-    /// Runs `f` with the unlocked session.
+    /// Runs `f` with the unlocked session, after any sync that is running:
+    /// for anything that changes the vaults or talks to the server.
     ///
     /// # Errors
     ///
@@ -233,9 +250,31 @@ impl AppState {
         &self,
         f: impl FnOnce(&mut Session) -> Result<T, AppError>,
     ) -> Result<T, AppError> {
+        let _gate = self.sync_gate();
+        self.read_session(f)
+    }
+
+    /// Runs `f` with the unlocked session straight away, even while a sync
+    /// runs: for reading what the vaults hold now. `f` must not talk to the
+    /// server, which would hold everything else up.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Locked`] if the vaults are locked, or `f`'s error.
+    pub fn read_session<T>(
+        &self,
+        f: impl FnOnce(&mut Session) -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
         let mut inner = self.inner();
         let session = inner.session.as_mut().ok_or(AppError::Locked)?;
         f(session)
+    }
+
+    /// Waits for any running sync and keeps others from starting.
+    pub fn sync_gate(&self) -> MutexGuard<'_, ()> {
+        self.sync_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Forgets the account after it was removed from this computer.

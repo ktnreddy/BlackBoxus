@@ -240,7 +240,7 @@ pub fn analyse(logins: &[Login], leaks: Option<&dyn Fn(&str) -> Outcome>) -> Hea
 ///
 /// Returns [`AppError::Locked`] when the vaults are locked.
 pub fn run(state: &crate::state::AppState, check_leaks: bool) -> Result<Health, AppError> {
-    let logins = state.with_session(|s| Ok(collect(s)))?;
+    let logins = state.read_session(|s| Ok(collect(s)))?;
     let real: &dyn Fn(&str) -> Outcome = &crate::breach::check;
     Ok(analyse(&logins, check_leaks.then_some(real)))
 }

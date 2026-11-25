@@ -37,7 +37,14 @@ pub fn rate(password: &str, context: &[&str]) -> Rating {
     let chars = password.chars().count();
     let rated: String = password.chars().take(MAX_RATED_CHARS).collect();
     let entropy = zxcvbn::zxcvbn(&rated, context);
-    let score = u8::from(entropy.score());
+    let short = chars < MIN_NEW_PASSWORD_CHARS;
+    // A password too short to use is never shown as strong, whatever
+    // zxcvbn thinks of it: the meter would contradict the rule.
+    let score = if short && chars > 0 {
+        u8::from(entropy.score()).min(1)
+    } else {
+        u8::from(entropy.score())
+    };
     let hint = entropy.feedback().and_then(|f| {
         f.warning()
             .map(|w| w.to_string())
@@ -45,6 +52,7 @@ pub fn rate(password: &str, context: &[&str]) -> Rating {
     });
     let label = match (chars, score) {
         (0, _) => "",
+        _ if short => "Too short",
         (_, 0 | 1) => "Weak",
         (_, 2) => "Fair",
         (_, 3) => "Strong",
@@ -62,7 +70,7 @@ pub fn rate(password: &str, context: &[&str]) -> Rating {
         score,
         guess_time,
         label,
-        acceptable: chars >= MIN_NEW_PASSWORD_CHARS && score >= MIN_SCORE,
+        acceptable: !short && score >= MIN_SCORE,
         chars,
         min_chars: MIN_NEW_PASSWORD_CHARS,
         hint,
@@ -94,6 +102,11 @@ mod tests {
 
     #[test]
     fn short_is_never_acceptable() {
-        assert!(!rate("Zq8#v!Lp", &[]).acceptable);
+        let short = rate("Zq8#v!Lp9%sW", &[]);
+        assert_eq!(short.chars, 12);
+        let short = rate("Zq8#v!Lp9%s", &[]);
+        assert!(!short.acceptable);
+        assert_eq!(short.label, "Too short");
+        assert!(short.score <= 1);
     }
 }

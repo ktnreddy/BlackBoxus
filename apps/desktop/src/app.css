@@ -42,6 +42,31 @@ body,
   margin: 0;
 }
 
+html {
+  background: var(--bg);
+}
+
+/* Tauri's isolation frame. Tauri hides it with an inline style, which this
+   app's content security policy blocks, so it is hidden here instead.
+   Visible, it sat under every screen as a white box and let the whole
+   page scroll and zoom. */
+#__tauri_isolation__ {
+  display: none !important;
+}
+
+/* Until the app has started. */
+#splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+}
+#splash img {
+  border-radius: 18px;
+}
+
 body {
   background: var(--bg);
   color: var(--text);

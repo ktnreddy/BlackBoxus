@@ -451,7 +451,7 @@ fn answer(state: &AppState, request: &Request) -> serde_json::Value {
             "account": status.account.is_some(),
         }),
         Request::Logins { url } => state
-            .with_session(|s| {
+            .read_session(|s| {
                 let mut logins = Vec::new();
                 for vault in s.vaults.summaries(&s.unlocked) {
                     let Some(id) =
@@ -488,7 +488,7 @@ fn answer(state: &AppState, request: &Request) -> serde_json::Value {
                 return json!({ "error": "no_match" });
             };
             state
-                .with_session(|s| {
+                .read_session(|s| {
                     let Ok(found) = s.vaults.item(&vault, &item_id) else {
                         return Ok(json!({ "error": "not_found" }));
                     };

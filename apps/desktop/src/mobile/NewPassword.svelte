@@ -50,6 +50,23 @@
   $effect(() => {
     ok = rating !== null && rating.acceptable && matches;
   });
+
+  /** What still stands between the user and the button below, in plain
+   *  words, so a greyed-out button never goes unexplained. */
+  const why = $derived.by(() => {
+    if (password.length === 0) return "";
+    if (!rating) return "Checking how strong it is…";
+    if (rating.chars < rating.min_chars) {
+      const more = rating.min_chars - rating.chars;
+      return `Add ${more} more character${more === 1 ? "" : "s"}. A master password needs at least ${rating.min_chars}, because it is the one thing protecting everything else.`;
+    }
+    if (!rating.acceptable) {
+      return `Still too easy to guess${rating.hint ? `: ${rating.hint.replace(/\.$/, "")}` : ""}. Add another word or two.`;
+    }
+    if (confirm.length === 0) return "Strong enough. Now type it again below, to make sure there's no typo.";
+    if (!matches) return "The two passwords don't match yet. Check the second one for a typo.";
+    return "";
+  });
 </script>
 
 {#snippet meter()}
@@ -68,11 +85,7 @@
       </div>
       <span class="np-what">{size === "pw" && rating.guess_time ? `${rating.label} · would take ${rating.guess_time} to guess` : rating.label}</span>
     </div>
-    {#if rating.chars < rating.min_chars}
-      <span class="np-hint">At least {rating.min_chars} characters · {rating.chars} so far</span>
-    {:else if rating.hint && !rating.acceptable}
-      <span class="np-hint">{rating.hint}</span>
-    {/if}
+    <span class="np-hint">{rating.chars} of at least {rating.min_chars} characters</span>
   {/if}
 {/snippet}
 
@@ -91,11 +104,10 @@
       autocomplete="new-password"
       {disabled}
     />
-    {#if confirm.length > 0 && !matches}
-      <span class="np-hint">The two passwords don't match yet.</span>
-    {/if}
   </div>
   {#if size === "pw"}<div class="np-block">{@render meter()}</div>{/if}
+  {#if why}<p class="np-why" role="status" aria-live="polite">{why}</p>{/if}
+  {#if ok}<p class="np-why ok" role="status" aria-live="polite">Both match and it's strong enough. You can continue.</p>{/if}
 </div>
 
 <style>
@@ -173,6 +185,18 @@
   }
   .big.weak .np-what {
     color: #fca5a5;
+  }
+  .np-why {
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: #1c1c1f;
+    color: #fcd34d;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  .np-why.ok {
+    color: #86efac;
   }
   .np-hint {
     padding: 0 4px;

@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- BlackBoxus as the phone's autofill service. No compatibility mode:
-     only browsers that support autofill themselves get matching by site. -->
-<autofill-service xmlns:android="http://schemas.android.com/apk/res/android" />
+     only browsers that support autofill themselves get matching by site.
+     Inline suggestions: on Android 11+, keyboards that support it show the
+     offer in their suggestion strip instead of a dropdown. -->
+<autofill-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:supportsInlineSuggestions="true" />

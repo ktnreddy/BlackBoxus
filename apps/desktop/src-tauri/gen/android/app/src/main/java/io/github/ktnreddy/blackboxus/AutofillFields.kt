@@ -87,6 +87,22 @@ object AutofillFields {
     return SignInForm(packageName, username, password, page)
   }
 
+  /** The text typed into the field [id], if it is in [structure]. */
+  fun textOf(structure: AssistStructure, id: AutofillId): String? {
+    fun visit(node: AssistStructure.ViewNode): String? {
+      if (node.autofillId == id) {
+        val value = node.autofillValue
+        if (value != null && value.isText) return value.textValue.toString()
+      }
+      for (i in 0 until node.childCount) visit(node.getChildAt(i))?.let { return it }
+      return null
+    }
+    for (i in 0 until structure.windowNodeCount) {
+      visit(structure.getWindowNodeAt(i).rootViewNode)?.let { return it }
+    }
+    return null
+  }
+
   private fun kindOf(node: AssistStructure.ViewNode): Kind {
     val hints = node.autofillHints?.map { it.lowercase() }.orEmpty()
     if (hints.any { "password" in it }) return Kind.PASSWORD

@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use vault_core::{FieldKind, Item, ItemType};
 
+use crate::error::AppError;
 use crate::state::AppState;
 
 // The browser extension's site matching. Phones have no extension, so the
@@ -45,6 +46,17 @@ enum Ask {
     Fill {
         vault: String,
         item: String,
+        page: Option<String>,
+    },
+    /// Saves what the person just typed into another app's sign-in form,
+    /// after they chose "Save" in Android's prompt and confirmed it here.
+    /// A login for the same site (or with the same title, in apps) and the
+    /// same username gets the new password; otherwise a new login is made
+    /// in the first vault this account owns.
+    Save {
+        title: String,
+        username: String,
+        password: zeroize::Zeroizing<String>,
         page: Option<String>,
     },
 }
@@ -85,13 +97,151 @@ fn offered(item: &Item, page: Option<&str>) -> bool {
         }
 }
 
+/// Whether `item` is the saved login for what is being saved: the same
+/// site (or, in apps, the same title) and the same username.
+fn same_login(item: &Item, title: &str, username: &str, page: Option<&str>) -> bool {
+    item.item_type == ItemType::Login
+        && first(item, FieldKind::Username).unwrap_or("") == username
+        && match page {
+            Some(page) => item
+                .fields
+                .iter()
+                .any(|f| f.kind == FieldKind::Url && matching::matches(&f.value, page)),
+            None => first(item, FieldKind::Title).is_some_and(|t| t.eq_ignore_ascii_case(title)),
+        }
+}
+
+/// The login to save, as an item: a new one, or `existing` with the new
+/// password in place of its first one.
+fn login_to_save(
+    existing: Option<Item>,
+    title: &str,
+    username: &str,
+    password: &str,
+    page: Option<&str>,
+    now: u64,
+) -> Item {
+    if let Some(mut item) = existing {
+        if let Some(field) = item
+            .fields
+            .iter_mut()
+            .find(|f| f.kind == FieldKind::Password)
+        {
+            field.value = zeroize::Zeroizing::new(password.to_owned());
+        } else {
+            item.fields
+                .push(vault_core::Field::new(FieldKind::Password, password));
+        }
+        item.modified_ms = now;
+        return item;
+    }
+    let title = if title.trim().is_empty() {
+        "Login"
+    } else {
+        title.trim()
+    };
+    let mut fields = vec![vault_core::Field::new(FieldKind::Title, title)];
+    if !username.is_empty() {
+        fields.push(vault_core::Field::new(FieldKind::Username, username));
+    }
+    fields.push(vault_core::Field::new(FieldKind::Password, password));
+    if let Some(page) = page {
+        fields.push(vault_core::Field::new(FieldKind::Url, page));
+    }
+    Item {
+        item_type: ItemType::Login,
+        created_ms: now,
+        modified_ms: now,
+        fields,
+    }
+}
+
+/// Saves a login typed into another app: see [`Ask::Save`].
+fn save(
+    state: &AppState,
+    title: &str,
+    username: &str,
+    password: &str,
+    page: Option<&str>,
+) -> Value {
+    if password.is_empty() || password.len() > 4096 || title.len() > 512 || username.len() > 4096 {
+        return json!({ "error": "invalid" });
+    }
+    let offline = state.is_offline();
+    let now = crate::state::now_ms();
+    let saved = state.with_session(|s| {
+        let summaries = s.vaults.summaries(&s.unlocked);
+        // An existing login for this, in any vault this account may change.
+        let mut target = None;
+        for vault in summaries.iter().filter(|v| v.writable) {
+            let Some(id) = wire::unb64_array(&vault.id).map(vault_core::VaultId::from_bytes) else {
+                continue;
+            };
+            if let Some((item_id, item)) = s
+                .vaults
+                .items(&id)
+                .unwrap_or_default()
+                .into_iter()
+                .find(|(_, item)| same_login(item, title, username, page))
+            {
+                target = Some((vault.name.clone(), id, Some(item_id), Some(item)));
+                break;
+            }
+        }
+        let (vault_name, id, item_id, existing) = match target {
+            Some(found) => found,
+            None => {
+                let vault = summaries
+                    .iter()
+                    .find(|v| v.owner && v.writable)
+                    .ok_or(AppError::ReadOnly)?;
+                let id = wire::unb64_array(&vault.id)
+                    .map(vault_core::VaultId::from_bytes)
+                    .ok_or(AppError::NotFound)?;
+                (vault.name.clone(), id, None, None)
+            }
+        };
+        let updated = existing.is_some();
+        let item = login_to_save(existing, title, username, password, page, now);
+        if offline {
+            s.vaults.put_offline(&s.unlocked, id, item_id, &item)?;
+        } else {
+            match s
+                .vaults
+                .put(&state.transport, &s.unlocked, id, item_id, &item)
+            {
+                Err(AppError::Offline) => {
+                    s.vaults.put_offline(&s.unlocked, id, item_id, &item)?;
+                }
+                other => {
+                    other?;
+                }
+            }
+        }
+        Ok(json!({ "saved": true, "updated": updated, "vault_name": vault_name }))
+    });
+    saved.unwrap_or_else(|e| match e {
+        AppError::Locked => json!({ "error": "locked" }),
+        e => json!({ "error": "failed", "message": e.to_string() }),
+    })
+}
+
 /// Answers one question from what the vaults hold.
 fn answer(state: &AppState, ask: &Ask) -> Value {
     let status = state.status();
     if status.account.is_none() || status.locked {
         return json!({ "error": "locked" });
     }
-    let answered = state.with_session(|s| {
+    if let Ask::Save {
+        title,
+        username,
+        password,
+        page,
+    } = ask
+    {
+        return save(state, title, username, password, page.as_deref());
+    }
+    let answered = state.read_session(|s| {
         Ok(match ask {
             Ask::Logins { page } => {
                 let mut logins = Vec::new();
@@ -139,13 +289,29 @@ fn answer(state: &AppState, ask: &Ask) -> Value {
                     "password": first(&found, FieldKind::Password).unwrap_or(""),
                 })
             }
+            Ask::Save { .. } => json!({ "error": "invalid" }),
         })
     });
     answered.unwrap_or_else(|_| json!({ "error": "locked" }))
 }
 
 #[cfg(target_os = "android")]
-pub use android::{enabled, init, open_settings};
+pub use android::{init, open_settings, status};
+
+/// The phone's autofill service, as Settings shows it.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct AutofillStatus {
+    /// Whether BlackBoxus is the phone's autofill service.
+    pub enabled: bool,
+    /// The last time Android asked about a form: when, which app, and
+    /// what came of it. Kept only on the phone.
+    #[serde(default)]
+    pub last: Option<serde_json::Value>,
+    /// Whether Chrome lets autofill services fill its pages: `None` when
+    /// Chrome isn't installed or too old to say.
+    #[serde(default)]
+    pub chrome: Option<bool>,
+}
 
 #[cfg(target_os = "android")]
 mod android {
@@ -160,23 +326,28 @@ mod android {
     /// The plugin's handle, for the settings commands.
     struct Bridge(PluginHandle<Wry>);
 
-    #[derive(serde::Deserialize)]
-    struct Status {
-        enabled: bool,
-    }
-
-    /// Whether BlackBoxus is the phone's autofill service.
-    pub fn enabled(app: &AppHandle) -> bool {
+    /// Whether BlackBoxus is the phone's autofill service, and what
+    /// happened the last time Android asked it about a form.
+    pub fn status(app: &AppHandle) -> super::AutofillStatus {
         app.try_state::<Bridge>()
-            .and_then(|b| b.0.run_mobile_plugin::<Status>("status", ()).ok())
-            .is_some_and(|s| s.enabled)
+            .and_then(|b| {
+                b.0.run_mobile_plugin::<super::AutofillStatus>("status", ())
+                    .ok()
+            })
+            .unwrap_or_default()
     }
 
-    /// Opens the phone's setting for choosing the autofill service.
-    pub fn open_settings(app: &AppHandle) {
+    /// Opens the phone's setting for choosing the autofill service, or
+    /// Chrome's.
+    pub fn open_settings(app: &AppHandle, chrome: bool) {
         if let Some(bridge) = app.try_state::<Bridge>() {
             // Best effort: some phones have no such setting.
-            let _: Result<serde_json::Value, _> = bridge.0.run_mobile_plugin("openSettings", ());
+            let command = if chrome {
+                "openChromeSettings"
+            } else {
+                "openSettings"
+            };
+            let _: Result<serde_json::Value, _> = bridge.0.run_mobile_plugin(command, ());
         }
     }
 
@@ -267,5 +438,32 @@ mod tests {
         )?;
         assert!(matches!(q.ask, Ask::Fill { .. }));
         Ok(())
+    }
+
+    #[test]
+    fn saving_updates_the_same_login_or_makes_a_new_one() {
+        let mut saved = login("https://example.com", "old");
+        saved.fields.push(Field::new(FieldKind::Username, "alex"));
+        // Same site and username: the password is replaced, nothing else.
+        assert!(same_login(&saved, "x", "alex", Some("https://example.com")));
+        let updated = login_to_save(Some(saved.clone()), "x", "alex", "new", None, 7);
+        assert_eq!(first(&updated, FieldKind::Password), Some("new"));
+        assert_eq!(first(&updated, FieldKind::Title), Some("Example"));
+        assert_eq!(updated.modified_ms, 7);
+        // Another username or another site is another login.
+        assert!(!same_login(&saved, "x", "sam", Some("https://example.com")));
+        assert!(!same_login(
+            &saved,
+            "x",
+            "alex",
+            Some("https://example.org")
+        ));
+        // In apps, logins are told apart by title.
+        assert!(same_login(&saved, "example", "alex", None));
+        let fresh = login_to_save(None, "  Bank app ", "", "pw", None, 9);
+        assert_eq!(first(&fresh, FieldKind::Title), Some("Bank app"));
+        assert_eq!(first(&fresh, FieldKind::Username), None);
+        assert_eq!(first(&fresh, FieldKind::Url), None);
+        assert_eq!(fresh.created_ms, 9);
     }
 }

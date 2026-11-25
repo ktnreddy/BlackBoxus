@@ -40,15 +40,23 @@
       your photo backups.
     </p>
     <div class="kt-box">
-      <span class="kt-label">Secret Key</span>
+      <span class="kt-label">Secret Key · for {kit.email}</span>
       <KeyGrid text={kit.secret_key} />
-      <span class="kt-label">For {kit.email} · no letters O or I, so nothing is mistaken for 0 or 1</span>
+      <span class="kt-label">
+        This is one key, {kit.secret_key.replaceAll("-", "").length} characters long. The dashes only split it
+        into groups so it's easier to copy; you can type it with or without them. It has no letters O or I,
+        so nothing is mistaken for 0 or 1.
+      </span>
     </div>
     {#if kit.recovery_key}
       <div class="kt-box">
         <span class="kt-label">Recovery key · shown only now</span>
         <KeyGrid text={kit.recovery_key} numbered />
-        <span class="kt-label">Lets you choose a new master password if you forget it.</span>
+        <span class="kt-label">
+          A second, separate key: {kit.recovery_key.split("-").filter((w) => w !== "").length} words, kept in this
+          order. It lets you choose a new master password if you ever forget yours. This is the only time it is
+          shown.
+        </span>
       </div>
     {/if}
     {#if !again}

@@ -26,8 +26,18 @@ object AutofillBroker {
   private val answers = ConcurrentHashMap<Long, CompletableFuture<JSONObject>>()
   private val ids = AtomicLong()
 
+  @Volatile
+  private var connected = false
+
+  /**
+   * Whether the Rust side has asked for questions in this process, so the
+   * app is running. When it isn't, nobody will answer.
+   */
+  fun connected(): Boolean = connected
+
   /** Rust is ready for the next question. */
   fun waitForQuestion(next: Waiter) {
+    connected = true
     val question: JSONObject?
     synchronized(lock) {
       question = queue.removeFirstOrNull()

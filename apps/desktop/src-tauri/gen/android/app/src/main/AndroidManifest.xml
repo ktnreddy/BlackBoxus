@@ -4,6 +4,11 @@
     <!-- Talking to the BlackBoxus server. The QR scanner adds the camera,
          asked for only when you scan a code. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Only to ask Chrome whether it lets autofill services fill its pages,
+         and to open that setting. -->
+    <queries>
+        <package android:name="com.android.chrome" />
+    </queries>
     <!-- Phones without a camera can still install the app. -->
     <uses-feature
         android:name="android.hardware.camera.any"
@@ -53,6 +58,13 @@
             android:name=".AutofillPickerActivity"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
             android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:exported="false" />
+        <!-- Confirms saving a login typed into another app. Kept in Recents
+             so the person can come back after unlocking. -->
+        <activity
+            android:name=".AutofillSaveActivity"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
             android:taskAffinity=""
             android:exported="false" />
 

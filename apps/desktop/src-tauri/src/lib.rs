@@ -7,6 +7,7 @@
 
 #[cfg(any(target_os = "android", test))]
 mod autofill;
+mod away;
 mod breach;
 #[cfg(desktop)]
 pub mod browser;
@@ -21,6 +22,7 @@ mod clipboard;
 mod commands;
 mod device_unlock;
 mod error;
+mod export;
 pub mod flows;
 mod generator;
 mod health;
@@ -100,6 +102,17 @@ pub fn run() -> Result<(), StartError> {
             }
             Ok(())
         })
+        // Phones lock when the app leaves the screen (see `away`).
+        .on_window_event(|window, event| {
+            #[cfg(mobile)]
+            match event {
+                tauri::WindowEvent::Suspended => away::left(window.app_handle()),
+                tauri::WindowEvent::Resumed => away::back(window.app_handle()),
+                _ => {}
+            }
+            #[cfg(not(mobile))]
+            let _ = (window, event);
+        })
         .invoke_handler(tauri::generate_handler![
             commands::app_status,
             commands::rate_password,
@@ -108,6 +121,9 @@ pub fn run() -> Result<(), StartError> {
             commands::unlock,
             commands::lock,
             commands::sync_vaults,
+            commands::local_vaults,
+            commands::export_vaults,
+            commands::import_open_export,
             commands::list_items,
             commands::get_item,
             commands::reveal_field,

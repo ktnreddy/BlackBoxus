@@ -8,6 +8,7 @@
     importFinish,
     importProgress,
     importDuplicates,
+    importOpenExport,
     importStart,
     type ImportPreview,
     type ImportProgress,
@@ -17,7 +18,11 @@
   let { vaults, onnotice }: { vaults: VaultSummary[]; onnotice: (text: string) => void } = $props();
 
   const writable = $derived(vaults.filter((v) => v.writable));
-  let step = $state<"choose" | "preview" | "running" | "done">("choose");
+  let step = $state<"choose" | "password" | "preview" | "running" | "done">("choose");
+  /** The password of a BlackBoxus export, while it's being opened. */
+  let exportPassword = $state("");
+  /** The chosen file is a BlackBoxus export, encrypted. */
+  let ownExport = $state(false);
   let fileName = $state("");
   let preview = $state<ImportPreview | null>(null);
   let target = $state("");
@@ -42,8 +47,26 @@
       if (chosen) {
         fileName = chosen.file_name;
         preview = chosen.preview;
-        step = "preview";
+        ownExport = chosen.needs_password;
+        step = chosen.needs_password ? "password" : "preview";
       }
+    } catch (e) {
+      error = errorMessage(e);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function openExport(event: SubmitEvent) {
+    event.preventDefault();
+    if (!exportPassword) return;
+    busy = true;
+    error = "";
+    const typed = exportPassword;
+    try {
+      preview = await importOpenExport(typed);
+      exportPassword = "";
+      step = "preview";
     } catch (e) {
       error = errorMessage(e);
     } finally {
@@ -101,7 +124,22 @@
 </script>
 
 <Page title="Import passwords" backLabel="Settings">
-  <p class="m-lede">Export a CSV from your browser or old password manager, then pick it here.</p>
+  <p class="m-lede">
+    Pick a CSV exported from your browser or old password manager, or a BlackBoxus export (.bbx) you made
+    earlier.
+  </p>
+  {#if step === "password"}
+    <form class="ip-form" onsubmit={openExport}>
+      <p class="m-small">
+        <strong>{fileName}</strong> is a BlackBoxus export. Type the export password chosen when it was made.
+      </p>
+      <label class="m-fl-field">
+        <span class="m-fl-label">Export password</span>
+        <span class="m-field"><input type="password" bind:value={exportPassword} autocomplete="off" disabled={busy} /></span>
+      </label>
+      <button type="submit" class="m-btn" disabled={busy || !exportPassword}>{busy ? "Opening… (a few seconds)" : "Open the export"}</button>
+    </form>
+  {/if}
   {#if step === "choose" || (step === "preview" && preview)}
     <button type="button" class="ip-pick" onclick={choose} disabled={busy}>
       <span class="ip-ic"><Icon name="file" size={22} /></span>
@@ -127,10 +165,12 @@
         </select>
       </label>
     </div>
-    <div class="ip-warn">
-      <Icon name="alert" size={22} />
-      <span>The CSV holds your passwords in plain text. Delete it from Downloads once the import finishes.</span>
-    </div>
+    {#if !ownExport}
+      <div class="ip-warn">
+        <Icon name="alert" size={22} />
+        <span>The CSV holds your passwords in plain text. Delete it from Downloads once the import finishes.</span>
+      </div>
+    {/if}
   {:else if step === "running" || step === "done"}
     <div class="m-list">
       <div class="m-row column">
@@ -142,7 +182,7 @@
       </div>
     </div>
     {#if progress?.error}<p class="m-error" role="alert">{progress.error}</p>{/if}
-    {#if step === "done"}
+    {#if step === "done" && !ownExport}
       <div class="m-note warn">
         <Icon name="alert" size={22} />
         <span>Now delete <strong>{fileName}</strong> in your Files app. It still holds your passwords in plain text.</span>
@@ -163,6 +203,12 @@
 </Page>
 
 <style>
+  .ip-form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-bottom: 16px;
+  }
   .ip-pick {
     display: flex;
     align-items: center;

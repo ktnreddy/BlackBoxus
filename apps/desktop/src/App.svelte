@@ -58,7 +58,7 @@
   appStatus().then(
     (s) => (status = s),
     (e: unknown) => (failure = errorMessage(e)),
-  );
+  ).finally(() => document.getElementById("splash")?.remove());
 </script>
 
 {#if status?.mobile}
