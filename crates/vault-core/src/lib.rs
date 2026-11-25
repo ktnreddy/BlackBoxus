@@ -34,6 +34,7 @@
 mod aead;
 pub mod device;
 mod error;
+pub mod export;
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
 pub mod fuzzing;

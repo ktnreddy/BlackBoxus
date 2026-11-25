@@ -141,3 +141,23 @@ sealed = nonce ‖ XChaCha20-Poly1305(key, nonce, copy, aad)
 `account_key` is the key set's account key (Section 5.1), so the copy can only be read while the account is unlocked. Binding the vault ID stops one vault's copy being swapped for another's. When a copy is loaded, its log is verified again (Section 8.4) before anything in it is used.
 
 To unlock without the server, a client MAY also keep the account's salt and KDF parameters from `prelogin` and its key set wrapped for the master password (method 1, Section 5.4), exactly as received. Unlocking offline derives the Account Unlock Key as in Section 3.4, checking the KDF parameters against the same bounds as at login, and unwraps the key set. Someone holding this record and the device's Secret Key can test master password guesses offline at the cost of Argon2id per guess; this is the same exposure as any password manager that unlocks offline, and is why the Secret Key lives in the platform's secure storage. While unlocked offline, the client has no session: it MUST treat vaults as read-only and MUST sign in again with the master password before syncing.
+
+## 6.9 Export
+
+A user can export the vaults they can read to one encrypted file, to keep as a backup or to import into another account. The file is opened with an *export password* the user chooses when exporting, not with their master password or Secret Key, so it can be opened anywhere, including after losing the account.
+
+```
+file    = "BBXEXP" ‖ 0x00 ‖ 0x01
+        ‖ u32be(memory_kib) ‖ u32be(iterations) ‖ u32be(parallelism)
+        ‖ salt (16 random bytes)
+        ‖ XChaCha20-Poly1305(key, content, aad = every byte before the nonce)
+key     = Argon2id(export password, salt, the parameters above), 32 bytes
+content = u16be(vault_count)
+        ‖ (u16be(len) ‖ vault name ‖ u32be(item_count) ‖ (u32be(len) ‖ item content)*)*
+```
+
+- The export password is normalised like a master password (3.2) and MUST meet the same minimum length and strength rules when exporting. Clients MUST use the default Argon2id parameters (3.4) and MUST reject parameters outside the accepted range (3.4) before deriving anything when opening.
+- Item content is the encoding of 6.3, without padding. A vault's details item is not exported; its name is.
+- Limits: 1 000 vaults, 100 000 items, names of at most 1 024 bytes. Parsers MUST reject anything else, as in 6.3.
+- Exporting MUST ask for the master password again, and SHOULD warn that anyone with the file and its password can read everything in it.
+- A plain CSV export, if offered, MUST be marked as unencrypted and confirmed separately.
