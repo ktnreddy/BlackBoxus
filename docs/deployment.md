@@ -10,7 +10,7 @@ The BlackBoxus server runs on Cloudflare Workers with a D1 database, on the Free
 
 Everything else happens on the first deploy:
 
-- the D1 database `blackboxus` is created and its schema applied (`crates/server-worker/migrations`);
+- the D1 database `blackboxus-apac` is created in Asia-Pacific, near most people using BlackBoxus, and its schema applied (`crates/server-worker/migrations`);
 - the Worker `api` is deployed to `https://api.blackboxus.workers.dev`;
 - the server's secrets are generated in the workflow and stored in Cloudflare, and the key transparency log's public key is printed in the workflow summary. Clients must have that public key built in.
 

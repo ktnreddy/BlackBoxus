@@ -97,6 +97,8 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       WRANGLER_SEND_METRICS: "false"
+      # In Asia-Pacific, near most people using it. Must match wrangler.toml.
+      DATABASE: blackboxus-apac
     defaults:
       run:
         working-directory: crates/server-worker
@@ -123,16 +125,43 @@ jobs:
       - name: Find or create the database
         run: |
           set -euo pipefail
-          find_id() { npx wrangler d1 list --json | jq -r '.[] | select(.name == "blackboxus") | .uuid'; }
+          find_id() { npx wrangler d1 list --json | jq -r --arg name "$DATABASE" '.[] | select(.name == $name) | .uuid'; }
           id=$(find_id)
           if [ -z "$id" ]; then
-            npx wrangler d1 create blackboxus
+            npx wrangler d1 create "$DATABASE" --location apac
             id=$(find_id)
           fi
           [[ "$id" =~ ^[0-9a-f-]{36}$ ]] || { echo "::error::Could not find the D1 database"; exit 1; }
           sed -i "s/00000000-0000-0000-0000-000000000000/$id/" wrangler.toml
+      - name: Copy the data from the old database (once)
+        # The database moved from North America ("blackboxus") to
+        # Asia-Pacific in November 2026. This copies everything across
+        # while the new one is still empty, checks every table matches,
+        # and stops before deploying if anything differs. Remove it once
+        # the move is done.
+        run: |
+          set -euo pipefail
+          count() {
+            npx wrangler d1 execute "$1" --remote --json --command "SELECT count(*) AS n FROM $2" |
+              jq -r '.[0].results[0].n'
+          }
+          if [ "$(count "$DATABASE" accounts)" != 0 ] || [ "$(count "$DATABASE" d1_migrations)" != 0 ]; then
+            echo "Already copied."
+            exit 0
+          fi
+          data="$RUNNER_TEMP/data.sql"
+          npx wrangler d1 export blackboxus --remote --no-schema --output "$data"
+          npx wrangler d1 execute "$DATABASE" --remote --yes --file "$data"
+          shred -u "$data"
+          for table in accounts d1_migrations emergency enrolments kt_leaves kt_state limits logins \
+            recovery sessions shares vault_access vault_items vault_keys vault_log vault_rules; do
+            old=$(count blackboxus "$table")
+            new=$(count "$DATABASE" "$table")
+            echo "$table: $old rows, copied $new"
+            [ "$old" = "$new" ] || { echo "::error::$table differs after copying; not deploying"; exit 1; }
+          done
       - name: Apply database migrations
-        run: npx wrangler d1 migrations apply blackboxus --remote
+        run: npx wrangler d1 migrations apply "$DATABASE" --remote
       - name: Deploy
         run: npx wrangler deploy --message "${GITHUB_SHA::7}"
       - name: Create server secrets on first deploy

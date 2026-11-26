@@ -11,12 +11,17 @@ preview_urls = false
 # every request inside the Free plan's 10 ms CPU limit.
 command = "RUSTFLAGS='-C target-feature=+simd128' worker-build --release"
 
+# Runs the server next to its database when that's faster than running
+# it next to the person: a request makes several database queries.
+[placement]
+mode = "smart"
+
 [vars]
 SERVER_ORIGIN = "https://api.blackboxus.workers.dev"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "blackboxus"
+database_name = "blackboxus-apac"
 # Filled in by the deploy workflow, which looks the database up by name.
 database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "migrations"
