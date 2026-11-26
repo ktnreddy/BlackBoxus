@@ -39,6 +39,9 @@ const MAX_LOGINS: usize = 500;
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Ask {
+    /// Whether the app is unlocked, so an autofill screen waiting for the
+    /// person to unlock can carry on.
+    Status,
     /// The logins to offer. `page` is the web page being filled
     /// (`https://example.com`), or `None` in an app that is not a browser.
     Logins { page: Option<String> },
@@ -232,6 +235,9 @@ fn answer(state: &AppState, ask: &Ask) -> Value {
     if status.account.is_none() || status.locked {
         return json!({ "error": "locked" });
     }
+    if matches!(ask, Ask::Status) {
+        return json!({ "unlocked": true });
+    }
     if let Ask::Save {
         title,
         username,
@@ -289,7 +295,7 @@ fn answer(state: &AppState, ask: &Ask) -> Value {
                     "password": first(&found, FieldKind::Password).unwrap_or(""),
                 })
             }
-            Ask::Save { .. } => json!({ "error": "invalid" }),
+            Ask::Save { .. } | Ask::Status => json!({ "error": "invalid" }),
         })
     });
     answered.unwrap_or_else(|_| json!({ "error": "locked" }))
@@ -430,6 +436,8 @@ mod tests {
 
     #[test]
     fn questions_are_read() -> Result<(), serde_json::Error> {
+        let q: Question = serde_json::from_str(r#"{"id":3,"kind":"status"}"#)?;
+        assert!(matches!(q.ask, Ask::Status));
         let q: Question = serde_json::from_str(r#"{"id":4,"kind":"logins","page":null}"#)?;
         assert_eq!(q.id, 4);
         assert!(matches!(q.ask, Ask::Logins { page: None }));

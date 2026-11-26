@@ -431,6 +431,10 @@
       {vaults}
       {offline}
       {syncedAt}
+      {syncing}
+      onsync={() => {
+        if (!syncing) sync();
+      }}
     />
   {/if}
 

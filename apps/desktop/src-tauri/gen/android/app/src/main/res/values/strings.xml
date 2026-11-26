@@ -12,8 +12,13 @@
     <string name="autofill_app_warning">This isn\'t a browser, so BlackBoxus can\'t check which site this is for. Only fill a login that belongs to this app.</string>
     <string name="autofill_search">Search logins</string>
     <string name="autofill_loading">Looking for logins…</string>
-    <string name="autofill_locked">BlackBoxus is locked. Open it and unlock, then come back and tap the field again.</string>
-    <string name="autofill_open">Open BlackBoxus</string>
+    <string name="autofill_locked">BlackBoxus is locked. Unlock it and you\'ll come straight back here to fill.</string>
+    <string name="autofill_open">Unlock BlackBoxus</string>
+    <string name="autofill_unlock_offer">Unlock BlackBoxus to fill</string>
+    <string name="autofill_no_username">No username</string>
+    <string name="autofill_more">%1$d more saved for this site</string>
+    <string name="autofill_filling">Filling…</string>
+    <string name="autofill_waiting">Waiting for you to unlock BlackBoxus…</string>
     <string name="autofill_none_for_site">No logins saved for %1$s.</string>
     <string name="autofill_none">No logins with a password yet.</string>
     <string name="autofill_no_results">No logins match.</string>
@@ -32,7 +37,7 @@
     <string name="save_saving">Saving…</string>
     <string name="save_saved">Saved to %1$s.</string>
     <string name="save_updated">Password updated in %1$s.</string>
-    <string name="save_locked">BlackBoxus is locked. Open it and unlock, then come back here (Back or Recents) and it saves by itself.</string>
+    <string name="save_locked">BlackBoxus is locked. Unlock it and you\'ll come straight back here, and it saves by itself.</string>
     <string name="save_failed">Couldn\'t save: %1$s</string>
     <string name="save_expired">This sign-in is too old to save now. Sign in again to be asked again.</string>
 </resources>

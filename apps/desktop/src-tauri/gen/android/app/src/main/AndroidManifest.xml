@@ -56,15 +56,16 @@
         </service>
         <activity
             android:name=".AutofillPickerActivity"
-            android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+            android:theme="@android:style/Theme.DeviceDefault.Dialog.NoActionBar"
             android:excludeFromRecents="true"
             android:taskAffinity=""
             android:exported="false" />
-        <!-- Confirms saving a login typed into another app. Kept in Recents
-             so the person can come back after unlocking. -->
+        <!-- Confirms saving a login typed into another app, as a sheet over
+             it. -->
         <activity
             android:name=".AutofillSaveActivity"
-            android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+            android:theme="@android:style/Theme.DeviceDefault.Dialog.NoActionBar"
+            android:excludeFromRecents="true"
             android:taskAffinity=""
             android:exported="false" />
 

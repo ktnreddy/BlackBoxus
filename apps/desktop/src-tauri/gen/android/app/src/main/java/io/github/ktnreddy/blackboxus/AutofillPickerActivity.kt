@@ -26,18 +26,22 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.RemoteViews
-import android.widget.ScrollView
 import android.widget.TextView
 import org.json.JSONObject
 import java.util.concurrent.Executors
 
 /**
- * Lets the person pick the login to fill into another app.
+ * Fills a login into another app.
+ *
+ * Opened with a login ([EXTRA_VAULT], [EXTRA_ITEM]) when the person tapped
+ * it under the field: it fills straight away, without showing a list.
+ * Opened without one ("Fill with BlackBoxus"), it lists logins to choose
+ * from, as a sheet over the app. In a browser, only logins for the page's
+ * site are listed; in other apps the person searches for the login.
  *
  * Logins come from the Rust side of the app, which must be running and
- * unlocked. In a browser, only logins for the page's site are listed. In
- * other apps nothing is matched automatically: the app is named and the
- * person searches for the login themselves.
+ * unlocked. If it isn't, the person is sent to unlock it and brought back
+ * here once they have ([BackAfterUnlock]).
  */
 class AutofillPickerActivity : Activity() {
   private val worker = Executors.newSingleThreadExecutor()
@@ -47,6 +51,9 @@ class AutofillPickerActivity : Activity() {
   private lateinit var status: TextView
   private var logins: List<JSONObject> = emptyList()
   private var busy = false
+  private lateinit var unlock: BackAfterUnlock
+  /** The login tapped under the field, to fill without showing a list. */
+  private var direct: JSONObject? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -59,13 +66,39 @@ class AutofillPickerActivity : Activity() {
       return
     }
     form = AutofillFields.find(structure)
+    unlock = BackAfterUnlock(this, worker) { start() }
+    val vault = intent.getStringExtra(EXTRA_VAULT)
+    val item = intent.getStringExtra(EXTRA_ITEM)
+    if (vault != null && item != null) {
+      direct = JSONObject().put("vault", vault).put("item", item)
+    }
+    Sheet.show(this)
     buildScreen()
-    load()
+    start()
+  }
+
+  override fun onResume() {
+    super.onResume()
+    unlock.checkNow()
   }
 
   override fun onDestroy() {
+    unlock.stop()
     worker.shutdownNow()
     super.onDestroy()
+  }
+
+  /** Fills the tapped login, or lists logins to choose from. */
+  private fun start() {
+    val login = direct
+    if (login != null) {
+      status.text = getString(R.string.autofill_filling)
+      status.visibility = View.VISIBLE
+      list.removeAllViews()
+      fill(login)
+    } else {
+      load()
+    }
   }
 
   @Suppress("DEPRECATION")
@@ -88,10 +121,12 @@ class AutofillPickerActivity : Activity() {
   private fun buildScreen() {
     val root = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
-      setBackgroundColor(BG)
-      fitsSystemWindows = true
-      setPadding(dp(20), dp(16), dp(20), dp(16))
+      setPadding(dp(20), dp(12), dp(20), dp(20))
     }
+    root.addView(Sheet.handle(this), LinearLayout.LayoutParams(dp(36), dp(4)).apply {
+      gravity = Gravity.CENTER_HORIZONTAL
+      bottomMargin = dp(12)
+    })
     val header = LinearLayout(this).apply {
       orientation = LinearLayout.HORIZONTAL
       gravity = Gravity.CENTER_VERTICAL
@@ -154,11 +189,8 @@ class AutofillPickerActivity : Activity() {
     status = text(14f, SOFT, getString(R.string.autofill_loading)).apply { setPadding(0, dp(12), 0, dp(12)) }
     root.addView(status)
     list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-    root.addView(
-      ScrollView(this).apply { addView(list) },
-      LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
-    )
-    setContentView(root)
+    root.addView(list)
+    setContentView(Sheet.wrap(this, root))
   }
 
   private fun rounded(color: Int) = GradientDrawable().apply {
@@ -168,6 +200,12 @@ class AutofillPickerActivity : Activity() {
 
   /** Asks the app for the logins to list. */
   private fun load() {
+    if (!AutofillBroker.connected()) {
+      locked()
+      return
+    }
+    status.text = getString(R.string.autofill_loading)
+    status.visibility = View.VISIBLE
     val question = JSONObject().put("kind", "logins").put("page", form.page ?: JSONObject.NULL)
     worker.execute {
       val answer = AutofillBroker.ask(question, TIMEOUT_MS)
@@ -185,9 +223,13 @@ class AutofillPickerActivity : Activity() {
     show("")
   }
 
-  /** The app is closed or locked: offer to open it. */
+  /**
+   * The app is closed or locked: offer to unlock it, then come back here
+   * and carry on by ourselves.
+   */
   private fun locked() {
-    status.text = getString(R.string.autofill_locked)
+    status.text = getString(if (unlock.waiting) R.string.autofill_waiting else R.string.autofill_locked)
+    status.visibility = View.VISIBLE
     list.removeAllViews()
     list.addView(
       Button(this).apply {
@@ -195,13 +237,7 @@ class AutofillPickerActivity : Activity() {
         isAllCaps = false
         setTextColor(Color.BLACK)
         background = rounded(ACCENT)
-        setOnClickListener {
-          startActivity(
-            Intent(this@AutofillPickerActivity, MainActivity::class.java)
-              .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-          )
-          finish()
-        }
+        setOnClickListener { unlock.unlock() }
       },
       LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)),
     )
@@ -250,6 +286,10 @@ class AutofillPickerActivity : Activity() {
   /** Gets the picked login's username and password and hands them back. */
   private fun fill(login: JSONObject) {
     if (busy) return
+    if (!AutofillBroker.connected()) {
+      locked()
+      return
+    }
     busy = true
     val question = JSONObject()
       .put("kind", "fill")
@@ -261,11 +301,15 @@ class AutofillPickerActivity : Activity() {
       main.post {
         busy = false
         if (isFinishing) return@post
-        if (answer == null || answer.has("error")) {
-          locked()
-          return@post
+        when {
+          answer == null || answer.optString("error") == "locked" -> locked()
+          answer.has("error") -> {
+            // Gone, or not for this site: let the person choose instead.
+            direct = null
+            load()
+          }
+          else -> finishWith(login.optString("title"), answer.optString("username"), answer.optString("password"))
         }
-        finishWith(login.optString("title"), answer.optString("username"), answer.optString("password"))
       }
     }
   }
@@ -299,10 +343,13 @@ class AutofillPickerActivity : Activity() {
     finish()
   }
 
-  private companion object {
+  companion object {
+    /** The login to fill straight away, when it was tapped under the field. */
+    const val EXTRA_VAULT = "io.github.ktnreddy.blackboxus.autofill.VAULT"
+    const val EXTRA_ITEM = "io.github.ktnreddy.blackboxus.autofill.ITEM"
+
     /** How long to wait for the app before saying it's closed. */
     const val TIMEOUT_MS = 4000L
-    val BG = Color.rgb(11, 11, 12)
     val PANEL = Color.rgb(24, 24, 27)
     val TEXT = Color.rgb(244, 244, 245)
     val SOFT = Color.rgb(161, 161, 170)

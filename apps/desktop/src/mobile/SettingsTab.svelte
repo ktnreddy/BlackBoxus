@@ -43,6 +43,8 @@
     vaults,
     offline,
     syncedAt,
+    syncing,
+    onsync,
   }: {
     status: AppStatus;
     autoLockMinutes: number;
@@ -53,6 +55,8 @@
     vaults: VaultSummary[];
     offline: boolean;
     syncedAt: number | null;
+    syncing: boolean;
+    onsync: () => void;
   } = $props();
 
   const w = $derived(unlockWords(status));
@@ -320,8 +324,11 @@
     <span class="st-avatar">{status.account?.email[0]?.toUpperCase() ?? "?"}</span>
     <div class="st-who">
       <span class="st-email">{status.account?.email}</span>
-      <span class="st-sub">{synced}</span>
+      <span class="st-sub">{syncing ? "Syncing…" : synced}</span>
     </div>
+    <button type="button" class="st-syncnow" onclick={onsync} disabled={syncing}>
+      {syncing ? "Syncing…" : "Sync now"}
+    </button>
   </div>
 
   <p class="st-section">Unlocking</p>
@@ -575,6 +582,20 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+  }
+  .st-syncnow {
+    margin-left: auto;
+    flex: none;
+    height: 36px;
+    padding: 0 14px;
+    border-radius: 18px;
+    border: 1px solid #2a2a2e;
+    background: #151517;
+    color: #f4f4f5;
+    font: 500 14px "DM Sans Variable", sans-serif;
+  }
+  .st-syncnow:disabled {
+    color: #a1a1aa;
   }
   .st-account {
     display: flex;
