@@ -448,7 +448,7 @@ dependencies = [
 
 [[package]]
 name = "blackboxus-desktop"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "aes-gcm 0.11.1",
  "android-native-keyring-store",
@@ -817,7 +817,7 @@ dependencies = [
 
 [[package]]
 name = "client-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5028,7 +5028,7 @@ dependencies = [
 
 [[package]]
 name = "server-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "hmac 0.13.0",
  "opaque-ke",
@@ -5042,7 +5042,7 @@ dependencies = [
 
 [[package]]
 name = "server-worker"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64ct",
  "getrandom 0.2.17",
@@ -6383,7 +6383,7 @@ dependencies = [
 
 [[package]]
 name = "vault-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -7188,7 +7188,7 @@ dependencies = [
 
 [[package]]
 name = "wire"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64ct",
  "serde",
