@@ -1003,7 +1003,9 @@ pub(crate) async fn import_choose_file(app: AppHandle) -> Result<Option<ImportCh
         // Android matches by file type, and exports are labelled
         // inconsistently there, so phones show every file.
         #[cfg(desktop)]
-        let dialog = dialog.add_filter("CSV export", &["csv"]);
+        let dialog = dialog
+            .add_filter("Password exports", &["bbx", "csv"])
+            .add_filter("All files", &["*"]);
         dialog.blocking_pick_file()
     })
     .await
